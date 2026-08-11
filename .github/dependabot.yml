@@ -1,0 +1,39 @@
+version: 2
+
+# Pinning every action to a commit SHA closes a supply-chain hole -- a tag
+# like @v4 is a moving branch, and a compromised action runs inside the job
+# that holds the PyPI OIDC token. The cost of pinning is that the pins go
+# stale silently, including security fixes. Dependabot is what pays that
+# cost: it opens a PR when a pinned action moves, rewriting both the SHA
+# and the trailing version comment.
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    # One PR for all of them rather than five separate ones. A solo
+    # maintainer reviews this in a single sitting, and CI proves the set
+    # works together before it merges.
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: 'ci'
+    labels: ['dependencies']
+
+  # Watches the floors declared in pyproject.toml. It will not touch
+  # constraints-py39.txt -- that lockfile is regenerated deliberately with
+  # the command documented at the top of the file, because its whole point
+  # is to reflect one resolution rather than drift a package at a time.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      python:
+        patterns: ['*']
+    commit-message:
+      prefix: 'deps'
+    labels: ['dependencies']
