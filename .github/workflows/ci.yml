@@ -1,24 +1,25 @@
 name: CI
 
-# Windows-only by design. peewee-access is a Windows-only package: it
-# depends on pywin32 unconditionally and talks to the Microsoft Access ODBC
-# driver, neither of which exists elsewhere, so `pip install .` cannot even
-# resolve on a Linux runner.
+# peewee-access is a Windows-only package at runtime, but most of it can be
+# tested anywhere, and the split matters for both speed and cost.
 #
-# The suite splits in two. Around 170 tests exercise SQL generation, the
-# LIMIT-to-TOP rewrite, the INSERT split, migrations, reflection metadata
-# and URL parsing without ever opening a file; they run everywhere and are
-# the gate. The remaining ~70 are marked `driver` or `adox` and skip
-# automatically unless a real Access ODBC driver is installed. GitHub's
-# windows runners do not reliably ship the Access Database Engine, so
-# treat those as a bonus when they run rather than a guarantee. The
-# "Report resolved environment" step below makes it visible either way.
+# Around 170 tests exercise SQL generation, the LIMIT-to-TOP rewrite, the
+# multi-row INSERT split, migrations, reflection metadata and URL parsing
+# without opening a file or loading a driver. Every module guards its pyodbc
+# import, so the package imports and those tests run with no driver present
+# at all -- which makes Linux the right place for the bulk of the matrix.
 #
-# The matrix spans both ends deliberately: 3.9 is the floor a locked-down
-# environment sits on, 3.14 is the newest release, and the `latest` job
-# below re-resolves everything from PyPI on a schedule so an upstream
-# release that breaks the backend surfaces here rather than in a user's
-# install.
+# What Linux cannot prove is that a real install works: pywin32 has no
+# non-Windows distribution, so `pip install .` deliberately fails there. Two
+# Windows jobs cover that, at both ends of the supported range. They also
+# pick up the ~70 tests marked `driver` / `adox` if the runner happens to
+# have the Access Database Engine, which GitHub's images do not reliably
+# ship -- treat those as a bonus, not a guarantee. The "Report resolved
+# environment" steps make it visible either way.
+#
+# Billing note: on a private repository Windows minutes bill at 2x the Linux
+# rate, so only the jobs that genuinely need Windows run there. On a public
+# repository all of this is free and unlimited.
 
 on:
   push:
@@ -27,8 +28,8 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Mondays, 06:00 UTC. Catches new peewee/pyodbc/pywin32 releases
-    # against unchanged code.
+    # Mondays, 06:00 UTC. Catches a new peewee/pyodbc/pywin32 release
+    # breaking unchanged code.
     - cron: '0 6 * * 1'
   workflow_dispatch:
 
@@ -40,9 +41,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The main gate: every supported interpreter, driver-free, on Linux.
   test:
-    name: py${{ matrix.python-version }}
-    runs-on: windows-latest
+    name: linux py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -51,21 +53,63 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      # --no-deps skips pyodbc and pywin32, which have no Linux
+      # distribution. The package still installs, entry point and all; the
+      # driver-free tests do not need either module to be importable, and
+      # tests/test_packaging.py asserts that stays true.
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[test]"
+          pip install -e . --no-deps
+          pip install peewee pytest flask pydantic
+
+      - name: Test
+        run: pytest -v
+
+  # A real Windows install, with genuine pyodbc and pywin32, at both ends of
+  # the supported range: the locked 3.9 floor and the newest interpreter
+  # resolving everything fresh.
+  windows:
+    name: windows py${{ matrix.python-version }} (${{ matrix.mode }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: '3.9'
+            mode: locked
+          - python-version: '3.14'
+            mode: newest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install (locked to constraints-py39.txt)
+        if: matrix.mode == 'locked'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]" -c constraints-py39.txt
+
+      - name: Install (newest of everything, no constraints)
+        if: matrix.mode == 'newest'
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade --upgrade-strategy eager -e ".[test]"
 
       - name: Report resolved environment
-        # Never fails the job. Records what pip actually chose, and whether
-        # the live half of the suite had anything to run against -- so a
-        # green build with 70 skips is not mistaken for 70 passes.
+        # Never fails the job. Records what pip chose and whether the live
+        # half of the suite had anything to run against, so a green build
+        # with 70 skips is not mistaken for 70 passes.
         run: |
           pip list
           python -c "import pwaccess, pyodbc; print('pwaccess', pwaccess.__version__); print('Access drivers:', pwaccess.iter_access_drivers() or 'NONE -- live tests will skip'); print('All ODBC drivers:', pyodbc.drivers())"
@@ -73,56 +117,8 @@ jobs:
       - name: Test
         run: pytest -v
 
-  # The constrained environment, installed exactly as it is at work: the
-  # 3.9 lockfile rather than a fresh resolution. Proves the pinned set is
-  # self-consistent and still passes, which a floating 3.9 job would not.
-  locked:
-    name: py3.9 (locked)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.9'
-          cache: pip
-
-      - name: Install against constraints-py39.txt
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[test]" -c constraints-py39.txt
-
-      - name: Report resolved environment
-        run: pip list
-
-      - name: Test
-        run: pytest -v
-
-  # Newest interpreter, newest everything, no cache and no constraints.
-  # This is the job that fails first when an upstream release breaks us.
-  latest:
-    name: py3.14 (unpinned, fresh resolve)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-
-      - name: Install newest of everything
-        run: |
-          python -m pip install --upgrade pip
-          pip install --upgrade --upgrade-strategy eager -e ".[test]"
-
-      - name: Report resolved environment
-        run: pip list
-
-      - name: Test
-        run: pytest -v
-
   docs:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -131,16 +127,22 @@ jobs:
           python-version: '3.13'
           cache: pip
 
+      # docs/conf.py mocks pyodbc, win32com and pythoncom for autodoc, so
+      # the documentation builds without a driver.
       - name: Install
-        run: pip install -e ".[doc]"
+        run: |
+          pip install -e . --no-deps
+          pip install peewee sphinx
 
       # -W turns warnings into errors: a broken cross-reference or a stale
       # autodoc target should fail the build, not scroll past in the log.
+      # Note this makes the job dependent on intersphinx reaching
+      # docs.python.org and docs.peewee-orm.com.
       - name: Build the documentation
         run: sphinx-build -b html -W docs docs/_build/html
 
   lint:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -149,8 +151,6 @@ jobs:
           python-version: '3.13'
           cache: pip
 
-      # Only ruff is needed, so the Windows-only runtime dependencies are
-      # deliberately not installed here.
       - name: Install ruff
         run: pip install ruff
 
