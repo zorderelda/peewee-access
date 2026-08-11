@@ -1,4 +1,0 @@
-pyodbc
-pywin32
-peewee
-pytest

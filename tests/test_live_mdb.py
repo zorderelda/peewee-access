@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.driver, pytest.mark.adox]
 def mdb(tmp_path_factory):
 	path = str(tmp_path_factory.mktemp('pwaccess_mdb') / 'legacy.mdb')
 	database = pwaccess.AccessDatabase(path)
-    
+
     ## @brief Alias so the Meta class body can see it; a class body cannot
 	#  read an enclosing function local of the same name it assigns.
 	_db = database

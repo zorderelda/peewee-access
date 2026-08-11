@@ -106,6 +106,118 @@ def render_sql():
 
 
 # ---------------------------------------------------------------------------
+# Recording database -- executes nothing, records everything
+# ---------------------------------------------------------------------------
+
+##
+# @brief A connection handle that satisfies peewee without a driver.
+#
+class FakeConnection(object):
+	autocommit = True
+
+	def close(self):
+		pass
+
+	def commit(self):
+		pass
+
+	def rollback(self):
+		pass
+
+
+##
+# @brief A cursor that satisfies peewee without touching a driver.
+#
+class FakeCursor(object):
+	description = None
+	rowcount = 1
+	lastrowid = None
+
+	def fetchone(self):
+		return [7]
+
+	def fetchall(self):
+		return []
+
+	def execute(self, sql, params=None):
+		return self
+
+	def close(self):
+		pass
+
+
+##
+# @brief An AccessDatabase that records SQL instead of executing it.
+#
+# The execution-time behaviour -- the LIMIT-to-TOP rewrite and the
+# multi-row INSERT split -- runs on the way to the driver, so it cannot be
+# reached by inspecting a query's .sql(). It needs a database that peewee
+# believes is connected. This is that database: every statement peewee
+# hands it is rewritten exactly as the real backend would, then appended to
+# .statements instead of being sent anywhere.
+#
+class RecordingAccess(pwaccess.AccessDatabase):
+
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.statements = []
+
+	def _connect(self):
+		return FakeConnection()
+
+	def _initialize_connection(self, conn):
+		pass
+
+	def _set_server_version(self, conn):
+		self.server_version = (4, 0, 0)
+
+	def cursor(self, commit=None, named_cursor=None):
+		return FakeCursor()
+
+	def execute_sql(self, sql, params=None, commit=None):
+		sql, params = pwaccess._sql.rewrite_limit_to_top(sql, params)
+		self.statements.append((sql, list(params or [])))
+		return FakeCursor()
+
+	def last_insert_id(self, cursor, query_type=None):
+		return 7
+
+	## Transactions are recorded rather than driven: there is no pyodbc
+	## connection to toggle autocommit on.
+	def begin(self):
+		self.statements.append(('BEGIN', []))
+
+	def commit(self):
+		self.statements.append(('COMMIT', []))
+
+	def rollback(self):
+		self.statements.append(('ROLLBACK', []))
+
+
+##
+# @brief A connected RecordingAccess, cleared before each test.
+#
+@pytest.fixture
+def recording_db():
+	database = RecordingAccess(r'C:\nonexistent\recording.accdb')
+	database.connect()
+	yield database
+	if not database.is_closed():
+		database.close()
+
+
+##
+# @brief Statements from recording_db with the BEGIN/COMMIT noise removed.
+#
+@pytest.fixture
+def sql_only():
+	def _filter(statements):
+		return [(s, p) for s, p in statements
+		        if s not in ('BEGIN', 'COMMIT', 'ROLLBACK')]
+	return _filter
+
+
+# ---------------------------------------------------------------------------
 # Live fixtures -- real file, real driver
 # ---------------------------------------------------------------------------
 

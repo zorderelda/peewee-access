@@ -117,7 +117,8 @@ if KeyValue is not None:
                 raise AccessConfigurationError(
                     'AccessKeyValue requires a database. Pass an '
                     'AccessDatabase instance, e.g. '
-                    "AccessKeyValue(database=AccessDatabase(r'C:\\app.accdb')). "
+                    'AccessKeyValue(database='
+                    "AccessDatabase(r'C:\\app.accdb')). "
                     'The base playhouse KeyValue defaults to in-memory '
                     'SQLite, which is not a useful default here.')
 

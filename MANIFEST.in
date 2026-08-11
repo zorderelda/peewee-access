@@ -1,0 +1,24 @@
+# What the sdist carries beyond the package itself.
+#
+# setuptools finds tests/test_*.py on its own but not conftest.py, which
+# holds every fixture they use -- an sdist without it ships a test suite
+# that collects and then errors on the first fixture lookup.
+
+include LICENSE
+include README.md
+include CHANGELOG.md
+
+# The Python 3.9 lockfile, so an sdist can reproduce a constrained install.
+include constraints-py39.txt
+
+recursive-include tests *.py
+include tests/README-tests.md
+
+# The Sphinx sources, so the documentation can be rebuilt from an sdist.
+recursive-include docs *.py *.rst
+
+# Never ship build noise or an Access lock file left by an interrupted run.
+global-exclude *.py[cod]
+global-exclude *.laccdb
+global-exclude *.ldb
+prune **/__pycache__

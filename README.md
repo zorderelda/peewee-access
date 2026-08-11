@@ -167,22 +167,39 @@ These are constraints of the database engine, not of this library.
 | Limitation | What to do instead |
 |---|---|
 | No upsert / `ON CONFLICT` | `get_or_create()`, or an explicit `SELECT` then `INSERT`/`UPDATE` |
-| No `OFFSET` | Keyset pagination — `.where(Model.id > last_id).limit(n)` |
+| No `OFFSET` | `pwaccess.paginate()`, or keyset pagination — `.where(Model.id > last_id).limit(n)` |
 | No savepoints | One level of `atomic()`; nested blocks raise |
+| No multi-row `VALUES` | Handled for you: `insert_many()` is split into one statement per row inside a single transaction |
+| No `LIMIT` on a `UNION` | Limit each branch separately, or slice in Python |
 | No sequences, `TRUNCATE TABLE`, `FULL OUTER JOIN`, `INTERSECT`, `EXCEPT` | — |
 | No 64-bit integers | `BigIntegerField` / `BigAutoField` map to 32-bit types and will overflow past 2³¹−1 |
 | `INSERT ... DEFAULT VALUES` unsupported | Supply at least one explicit column |
 | Single writer | Serialize writes in your application |
 
 `LIMIT n` is rewritten to `SELECT TOP n` at execution time, since Access
-will not accept a parameter marker in a `TOP` clause. A non-zero `OFFSET`
-raises `AccessNotSupportedError` with keyset-pagination guidance.
+will not accept a parameter marker in a `TOP` clause.
+
+Three cases raise `AccessNotSupportedError` rather than reaching the driver,
+because each would otherwise produce a wrong answer or an error message that
+names no cause:
+
+* **A non-zero `OFFSET`**, with or without an accompanying `LIMIT`. Use
+  `pwaccess.paginate(query, page, paginate_by)`, which over-fetches with
+  `TOP` and slices in Python, or keyset pagination for deep paging.
+* **A limited compound query** (`UNION`, `INTERSECT`, `EXCEPT`). Jet applies
+  `TOP` to the individual `SELECT` it is attached to rather than to the
+  combined result, so the rewrite would silently return the wrong rows.
+* **Savepoints**, reached by nesting `atomic()` blocks.
+
+When the rewrite cannot be completed for any other reason, the statement is
+passed through untouched. Stripping a `LIMIT` without replacing it would turn
+a limited query into a full-table scan that looks correct on small data.
 
 ---
 
 ## How it works
 
-Importing `pwaccess` applies four patches to peewee's SQL generation. Each
+Importing `pwaccess` applies five patches to peewee's SQL generation. Each
 is gated on the Access dialect flag and delegates to peewee's original
 implementation for every other database, so SQLite, PostgreSQL and MySQL
 connections in the same process are unaffected. The patches are idempotent
@@ -191,8 +208,10 @@ and removable with `pwaccess.uninstall()`.
 | Patch | Reason |
 |---|---|
 | `Field.ddl` | Omit `NOT NULL` for types that reject it; strip precision from `CURRENCY`; emit an indexed `TextField` as `TEXT(255)`, since Access cannot index a `MEMO` |
-| `SchemaManager._create_table` / `._drop_table` | Access rejects `IF NOT EXISTS` / `IF EXISTS` |
+| `SchemaManager._create_table` | Access rejects `IF NOT EXISTS` |
+| `SchemaManager._drop_table` | Access rejects `IF EXISTS` |
 | `Join.__sql__` | Access requires `FROM ((a JOIN b) JOIN c)`, not a flat join chain |
+| `Insert._execute` | Jet accepts one `VALUES` tuple per `INSERT`, so `insert_many()` is split into one statement per row inside a single transaction |
 
 ### Why ADOX is required
 
@@ -216,9 +235,38 @@ files as well as `.accdb`, with Jet kept only as a fallback.
 ## Requirements
 
 * Windows
-* Python 3.8+
+* Python 3.9+
 * Microsoft Access Database Engine, bitness matching your interpreter
 * `.accdb` (ACE) and `.mdb` (JET) files are both supported
+
+### Locked-down environments
+
+`pip install peewee-access` resolves to the newest release of everything,
+which is what the package is developed and tested against.
+
+Python 3.9 is the floor, and it costs you nothing: every runtime dependency
+— peewee, pyodbc, pywin32 — resolves to its newest release on 3.9, the same
+versions a 3.14 install gets. There is no "old" variant of the backend.
+
+Where an environment needs installs to be *reproducible* rather than merely
+current, use the lockfile:
+
+```
+pip install peewee-access -c constraints-py39.txt
+```
+
+The only genuine divergence on 3.9 is development tooling: pytest 9 requires
+3.10+ and Sphinx 9 requires 3.12+, so a 3.9 box gets pytest 8.x and Sphinx
+7.x. To reproduce those older lines on a newer interpreter — to check a
+change before it reaches the constrained box — add the `work` extra:
+
+```
+pip install -e ".[test,doc,work]"
+```
+
+CI covers both ends on every run: 3.9 through 3.14, the 3.9 lockfile, and a
+job that re-resolves everything from PyPI with no cache so an upstream
+release that breaks the backend shows up here first.
 
 ## License
 

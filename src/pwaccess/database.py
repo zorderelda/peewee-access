@@ -5,9 +5,10 @@ import os
 import re
 
 from peewee import (
+    CSQ_PARENTHESES_NEVER,
+    SQL,
     ColumnMetadata,
     Context,
-    CSQ_PARENTHESES_NEVER,
     Database,
     ForeignKeyMetadata,
     IndexMetadata,
@@ -162,12 +163,21 @@ class AccessDatabase(Database):
 
     # -- Connection -------------------------------------------------------
 
-    def _build_connection_string(self, filepath):
-        """Assemble the ODBC connection string for *filepath*."""
+    def _build_connection_string(self, filepath, redact=False):
+        """
+        Assemble the ODBC connection string for *filepath*.
+
+        :param redact: Replace the password with ``***``. Set when the
+            string is going somewhere a human will read -- an exception
+            message, a log line -- rather than to the driver. A connection
+            string embedded verbatim in a traceback puts the database
+            password into every log aggregator and bug report that
+            traceback reaches.
+        """
         driver = self._driver or require_driver()
         parts = ['Driver={%s}' % driver, 'DBQ=%s' % filepath]
         if self._password:
-            parts.append('PWD=%s' % self._password)
+            parts.append('PWD=%s' % ('***' if redact else self._password))
         for key, value in self.connect_params.items():
             parts.append('%s=%s' % (key, value))
         return ';'.join(parts)
@@ -194,7 +204,9 @@ class AccessDatabase(Database):
                 '  Underlying error:  %s\n'
                 'Run pwaccess.list_access_drivers() to inspect the installed '
                 'ODBC drivers and confirm the bitness matches your Python.'
-                % (filepath, conn_str, detect_driver(), exc)) from exc
+                % (filepath,
+                   self._build_connection_string(filepath, redact=True),
+                   detect_driver(), exc)) from exc
 
     def _set_server_version(self, conn):
         try:
@@ -215,6 +227,17 @@ class AccessDatabase(Database):
     def execute_sql(self, sql, params=None, commit=None):
         """Rewrite LIMIT/OFFSET into TOP, then execute the statement."""
         sql, params = rewrite_limit_to_top(sql, params)
+
+        # DDL invalidates the ADOX snapshots. Without this a migration
+        # followed by get_columns() in the same connection answers from a
+        # snapshot taken before the ALTER, reporting the old primary key,
+        # foreign keys and nullability. Checked only when something is
+        # actually cached, so the ordinary query path pays nothing.
+        if self._adox_cache and \
+                sql[:8].lstrip().upper().startswith(('ALTER', 'CREATE',
+                                                     'DROP')):
+            self._adox_cache.clear()
+
         logger.debug((sql, params))
         with __exception_wrapper__:
             cursor = self.cursor()
@@ -482,9 +505,24 @@ class AccessDatabase(Database):
     # -- Date and time helpers --------------------------------------------
 
     def extract_date(self, date_part, date_field):
-        """Access uses ``DatePart('interval', date)`` rather than EXTRACT."""
-        part = self._DATE_PART_MAP.get(str(date_part).lower(), date_part)
-        return fn.DatePart(part, date_field, python_value=int)
+        """
+        Access uses ``DatePart('interval', date)`` rather than EXTRACT.
+
+        The interval code is written into the statement as a literal
+        rather than bound as a parameter. Jet documents the argument as a
+        string expression and the ACE driver is unreliable at inferring a
+        parameter's type in a scalar-function argument position, answering
+        "Data type mismatch in criteria expression" instead. Inlining is
+        safe here because the code comes from :attr:`_DATE_PART_MAP`, a
+        fixed dict of nine values, never from the caller.
+
+        A date part Access does not name falls back to a bound parameter,
+        so an unexpected value cannot be interpolated into the SQL.
+        """
+        part = self._DATE_PART_MAP.get(str(date_part).lower())
+        if part is None:
+            return fn.DatePart(date_part, date_field, python_value=int)
+        return fn.DatePart(SQL("'%s'" % part), date_field, python_value=int)
 
     def truncate_date(self, date_part, date_field):
         """

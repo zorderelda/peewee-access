@@ -1,0 +1,81 @@
+# Reproducible install set for Python 3.9.
+#
+# Use this where the interpreter is fixed at 3.9 and installs must not
+# drift between machines or over time:
+#
+#     pip install peewee-access -c constraints-py39.txt
+#     pip install -e ".[test,doc]" -c constraints-py39.txt
+#
+# Everyone else should ignore this file. A plain `pip install
+# peewee-access` on a current interpreter resolves to the newest release
+# of everything, which is what the package is developed and tested
+# against.
+#
+# WHY THIS IS SHORTER THAN IT LOOKS
+#
+# On Python 3.9 pip already selects the newest peewee, pyodbc and pywin32
+# there are -- 3.9 is new enough that none of the runtime dependencies cap
+# out below their latest release. Nothing here holds the backend itself
+# back. What this file buys is determinism: pinning the whole transitive
+# closure, including the test and documentation tooling, so an install
+# today and an install in six months produce the same tree.
+#
+# The two places where 3.9 genuinely diverges from a current interpreter
+# are pytest (9.x requires 3.10+, so 3.9 gets 8.4.2) and Sphinx (9.x
+# requires 3.12+, so 3.9 gets 7.4.7). Both are development-time only.
+#
+# Regenerate after a dependency bump with:
+#
+#     pip install --dry-run --report - --python-version 3.9 \
+#         --platform win_amd64 --only-binary=:all: --target /tmp/discard \
+#         "peewee>=3.14" "pyodbc>=4.0" "pywin32>=300" \
+#         "pytest>=7.0" "flask>=2.0" "pydantic>=2.0" "sphinx>=7.4.7"
+#
+# Resolved for cp39 / win_amd64.
+
+# -- Runtime --------------------------------------------------------------
+peewee==4.3.0
+pyodbc==5.3.0
+pywin32==312
+
+# -- Optional features ----------------------------------------------------
+Flask==3.1.3
+pydantic==2.13.4
+
+# -- Test tooling ---------------------------------------------------------
+pytest==8.4.2
+iniconfig==2.1.0
+pluggy==1.6.0
+
+# -- Documentation tooling ------------------------------------------------
+Sphinx==7.4.7
+alabaster==0.7.16
+babel==2.18.0
+docutils==0.21.2
+imagesize==1.5.0
+Pygments==2.20.0
+snowballstemmer==3.1.1
+sphinxcontrib-applehelp==2.0.0
+sphinxcontrib-devhelp==2.0.0
+sphinxcontrib-htmlhelp==2.1.0
+sphinxcontrib-jsmath==1.0.1
+sphinxcontrib-qthelp==2.0.0
+sphinxcontrib-serializinghtml==2.0.0
+
+# -- Transitive -----------------------------------------------------------
+annotated-types==0.7.0
+blinker==1.9.0
+certifi==2026.7.22
+charset-normalizer==3.4.9
+click==8.1.8
+idna==3.18
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+packaging==26.3
+pydantic_core==2.46.4
+requests==2.32.5
+typing-inspection==0.4.2
+typing_extensions==4.16.0
+urllib3==2.6.3
+Werkzeug==3.1.8

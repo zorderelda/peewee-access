@@ -168,3 +168,85 @@ def test_add_column_with_index(offline_migrator):
 		with_context=True)
 	assert isinstance(operations, list)
 	assert len(operations) == 2          # ADD COLUMN, then CREATE INDEX
+
+
+##
+# @brief A non-null column with no default must refuse.
+#
+# The non-null path reimplements the base add_column() minus its trailing
+# add_not_null(). Reimplementing it means re-stating the guards it makes,
+# and this is the one that matters most: without it the back-fill step
+# runs anyway and emits UPDATE note SET votes = NULL, quietly writing
+# NULLs into a column the caller asked to be non-null.
+#
+def test_add_column_not_null_without_default_refuses(offline_migrator):
+	with pytest.raises(ValueError) as excinfo:
+		offline_migrator.add_column('note', 'votes',
+		                            IntegerField(null=False),
+		                            with_context=True)
+	assert 'default' in str(excinfo.value)
+
+
+##
+# @brief A non-null foreign key must still get its constraint.
+#
+# AccessMigrator sets explicit_create_foreign_key, so the constraint is a
+# separate statement rather than part of the column definition. Omitting
+# it leaves an ordinary integer column where a relationship was asked for
+# -- which reflection then cannot see either.
+#
+def test_add_column_not_null_foreign_key_keeps_constraint(offline_migrator):
+	from peewee import ForeignKeyField, Model
+
+	class Note(Model):
+		class Meta:
+			database = offline_migrator.database
+			table_name = 'note'
+
+	field = ForeignKeyField(Note, field=Note.id, null=False, default=1)
+	field.name = field.column_name = 'note_id'
+
+	operations = offline_migrator.add_column('comment', 'note_id', field,
+	                                         with_context=True)
+	methods = [getattr(op, 'method', None) for op in operations]
+	assert 'add_foreign_key_constraint' in methods
+	## And the NOT NULL step is still absent, which is the whole point of
+	## overriding add_column() in the first place.
+	assert 'add_not_null' not in methods
+
+
+##
+# @brief A nullable foreign key goes through the base implementation.
+#
+def test_add_column_nullable_foreign_key(offline_migrator):
+	from peewee import ForeignKeyField, Model
+
+	class Note(Model):
+		class Meta:
+			database = offline_migrator.database
+			table_name = 'note'
+
+	field = ForeignKeyField(Note, field=Note.id, null=True)
+	field.name = field.column_name = 'note_id'
+
+	operations = offline_migrator.add_column('comment', 'note_id', field,
+	                                         with_context=True)
+	methods = [getattr(op, 'method', None) for op in operations]
+	assert 'add_foreign_key_constraint' in methods
+	assert 'add_not_null' not in methods
+
+
+##
+# @brief A non-null column with a default is back-filled, not nulled.
+#
+def test_add_column_backfills_the_default(offline_migrator):
+	operations = offline_migrator.add_column(
+		'note', 'votes', IntegerField(null=False, default=7),
+		with_context=True)
+	apply_default = [op for op in operations
+	                 if getattr(op, 'method', None) == 'apply_default']
+	assert len(apply_default) == 1
+	## The field handed to apply_default must still carry its default; the
+	## non-null path temporarily clears null on a copy and has to put the
+	## default back before the back-fill is queued.
+	assert apply_default[0].args[2].default == 7

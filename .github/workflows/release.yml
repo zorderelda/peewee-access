@@ -1,0 +1,121 @@
+name: Release
+
+# Builds the sdist and wheel and publishes them to PyPI, triggered by
+# pushing a version tag:
+#
+#     git tag v1.0.0
+#     git push origin v1.0.0
+#
+# Authentication is PyPI Trusted Publishing (OIDC): no API token, no
+# repository secret. Before the first release, register this workflow once
+# at https://pypi.org/manage/account/publishing/ with
+#
+#     PyPI project name:  peewee-access
+#     Owner:              zorderelda
+#     Repository name:    peewee-access
+#     Workflow name:      release.yml
+#     Environment name:   pypi
+#
+# The `id-token: write` permission on the publish job is what lets GitHub
+# mint the short-lived token PyPI exchanges for an upload session; without
+# it the upload fails with "invalid-publisher".
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tooling
+        run: pip install build twine
+
+      # The build backend reads the version out of pwaccess/__init__.py by
+      # parsing the source, so no runtime dependency has to be installed
+      # here. The package is pure Python: one py3-none-any wheel serves
+      # every interpreter.
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check that the tag matches the package version
+        # A tag of v1.0.1 against a package still saying 1.0.0 would
+        # publish the wrong version under the right name, which cannot be
+        # undone: PyPI does not allow a filename to be reused.
+        shell: bash
+        run: |
+          version=$(python -c "import re,pathlib; print(re.search(r\"__version__ = '([^']+)'\", pathlib.Path('src/pwaccess/__init__.py').read_text()).group(1))")
+          echo "package version: $version"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            echo "tag version:     $tag"
+            if [ "$tag" != "$version" ]; then
+              echo "::error::tag v$tag does not match pwaccess.__version__ ($version)"
+              exit 1
+            fi
+          fi
+
+      - name: Validate the metadata
+        run: twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Gate the upload behind a named environment so a release can require
+    # a manual approval in the repository's Environments settings.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/peewee-access
+    permissions:
+      id-token: write        # required for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  # Create the GitHub Release itself, with the sdist and wheel attached.
+  # Runs after the upload so a PyPI failure does not leave a published
+  # release pointing at a version nobody can install. Tag pushes only --
+  # a manual workflow_dispatch has no tag to hang a release off.
+  github-release:
+    needs: publish
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # required to create a release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Published to PyPI: https://pypi.org/project/peewee-access/${GITHUB_REF_NAME#v}/
+
+          See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md) for what changed."

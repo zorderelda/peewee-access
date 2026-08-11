@@ -35,7 +35,7 @@ copyright = '2026, Jeff Walsh'
 try:
     from pwaccess import __version__ as release
 except Exception:                                  # pragma: no cover
-    release = '0.1.0'
+    release = '1.0.0'
 
 version = '.'.join(release.split('.')[:2])
 

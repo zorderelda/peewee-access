@@ -30,7 +30,7 @@ import copy
 import logging
 import re
 
-from peewee import CharField, Entity
+from peewee import CharField, Entity, ForeignKeyField
 
 from .database import AccessDatabase
 from .exceptions import AccessNotSupportedError
@@ -243,32 +243,61 @@ if SchemaMigrator is not None:
             """
             Add a column.
 
-            Identical to the base implementation except that the trailing
-            ``add_not_null()`` step is omitted, since Access cannot apply a
-            NOT NULL constraint to an existing column. A non-null field is
-            still created and back-filled with its default; the constraint
-            itself is simply not enforced by the engine.
-            """
-            if not field.null:
-                logger.warning(
-                    'Access cannot add a NOT NULL constraint to an existing '
-                    'column. Column %r on table %r will be created and '
-                    'populated with its default, but will remain nullable.',
-                    column_name, table)
-                field = copy.copy(field)
-                default, field.null = field.default, True
-                operations = [self.alter_add_column(table, column_name,
-                                                    field)]
-                field.default = default
-                operations.append(self.apply_default(table, column_name,
-                                                     field))
-                if field.index or field.unique:
-                    operations.append(self.add_index(table, (column_name,),
-                                                     field.unique))
-                return operations
+            A nullable field is handed straight to the base implementation.
+            A non-null field cannot be, because the base finishes with
+            ``add_not_null()``, which Access cannot express and which this
+            class raises on -- so the non-null path is reproduced here
+            minus that final step. The column is created, back-filled with
+            its default, and left nullable as far as the engine is
+            concerned.
 
-            return super(AccessMigrator, self).add_column(
-                table, column_name, field, with_context=True)
+            Every other guarantee the base implementation makes is kept:
+            the missing-default and unbound-foreign-key checks still raise,
+            and a foreign key still gets its constraint. Dropping those
+            along with ``add_not_null()`` would turn a required column with
+            no default into a silent ``UPDATE ... SET col = NULL``, and a
+            required foreign key into an unconstrained integer column.
+
+            :raises ValueError: If *field* is non-null with no default, or
+                is a foreign key with no target field.
+            """
+            if field.null:
+                return super(AccessMigrator, self).add_column(
+                    table, column_name, field, with_context=True)
+
+            if field.default is None:
+                raise ValueError('%s is not null but has no default'
+                                 % column_name)
+
+            is_foreign_key = isinstance(field, ForeignKeyField)
+            if is_foreign_key and not field.rel_field:
+                raise ValueError('Foreign keys must specify a `field`.')
+
+            logger.warning(
+                'Access cannot add a NOT NULL constraint to an existing '
+                'column. Column %r on table %r will be created and '
+                'populated with its default, but will remain nullable.',
+                column_name, table)
+
+            field = copy.copy(field)
+            default, field.null = field.default, True
+            operations = [self.alter_add_column(table, column_name, field)]
+            field.default = default
+            operations.append(self.apply_default(table, column_name, field))
+
+            if is_foreign_key and self.explicit_create_foreign_key:
+                operations.append(self.add_foreign_key_constraint(
+                    table, column_name,
+                    field.rel_model._meta.table_name,
+                    field.rel_field.column_name,
+                    field.on_delete, field.on_update))
+
+            if field.index or field.unique:
+                operations.append(self.add_index(
+                    table, (column_name,), field.unique,
+                    getattr(field, 'index_type', None)))
+
+            return operations
 
         # -- Operations Jet SQL cannot express -----------------------------
 

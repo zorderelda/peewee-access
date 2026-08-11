@@ -1,16 +1,28 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "peewee-access"
-version = "0.1.0"
 description = "Microsoft Access (JET/ACE) backend for the peewee ORM"
 readme = "README.md"
-requires-python = ">=3.8"
+
+# 3.9 is the real floor, not 3.8. pyodbc 5.3 and pywin32 312 both require
+# >=3.9, so a 3.8 install silently resolved to older drivers while the
+# metadata claimed support -- the worst of both. On 3.9 every runtime
+# dependency resolves to its newest release, so the floor costs nothing:
+# a locked-down 3.9 environment and a current interpreter get the same
+# peewee, pyodbc and pywin32. See constraints-py39.txt.
+requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [{name = "Jeff Walsh"}]
 keywords = ["peewee", "access", "accdb", "mdb", "jet", "ace", "odbc", "orm"]
+
+# Read from pwaccess.__version__ so the package and its metadata cannot
+# drift apart. setuptools resolves this by parsing the source, not by
+# importing it, so the build does not need pyodbc or pywin32 present.
+# tests/test_packaging.py asserts the two agree.
+dynamic = ["version"]
 
 # Windows only. The backend talks to the Microsoft Access ODBC driver
 # through pyodbc, and reads the schema metadata that driver refuses to
@@ -22,6 +34,23 @@ dependencies = [
     "peewee>=3.14",
     "pyodbc>=4.0",
     "pywin32>=300",
+]
+
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Database",
+    "Topic :: Database :: Front-Ends",
 ]
 
 # Optional feature extras. Flask is needed only for AccessPaginatedQuery;
@@ -39,26 +68,49 @@ test = [
     "flask>=2.0",
     "pydantic>=2.0",
 ]
+lint = ["ruff>=0.6"]
 
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Environment :: Win32 (MS Windows)",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: Microsoft :: Windows",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Database",
-    "Topic :: Database :: Front-Ends",
+# Reproduce a Python 3.9 environment's tooling on any interpreter.
+#
+# This deliberately caps nothing at runtime. On 3.9 pip already selects
+# the newest peewee, pyodbc and pywin32, so an environment pinned to 3.9
+# runs exactly the same backend as one on 3.14 -- there is nothing to hold
+# back and pretending otherwise would only stop 3.9 users getting fixes.
+#
+# What does differ is the development tooling: pytest 9 requires 3.10+ and
+# Sphinx 9 requires 3.12+, so a 3.9 box gets pytest 8.x and Sphinx 7.x.
+# Combining this extra with the others reproduces those older lines on a
+# newer interpreter, which is how you check locally that a change still
+# works on the constrained box:
+#
+#     pip install -e ".[test,doc,work]"
+#
+# For a fully reproducible install rather than just the right major
+# versions, use the lockfile instead:
+#
+#     pip install peewee-access -c constraints-py39.txt
+work = [
+    "pytest>=8.0,<9",
+    "sphinx>=7.4.7,<8",
 ]
+
+# Documentation build only -- nothing here is imported by the package, so
+# "pip install peewee-access" must not drag it in. Build the HTML with:
+#     pip install -e .[doc]
+#     cd docs && sphinx-build -b html . _build/html
+#
+# This extra names only the direct requirement. Sphinx installs alabaster,
+# jinja2, pygments, docutils, babel, imagesize, snowballstemmer and the
+# sphinxcontrib-* packages itself, and docs/conf.py uses only bundled
+# extensions (autodoc, intersphinx, viewcode, napoleon) plus the bundled
+# Alabaster theme.
+doc = ["sphinx>=7.4.7"]
 
 [project.urls]
 Homepage = "https://github.com/zorderelda/peewee-access"
 Issues = "https://github.com/zorderelda/peewee-access/issues"
+Documentation = "https://github.com/zorderelda/peewee-access#readme"
+Changelog = "https://github.com/zorderelda/peewee-access/releases"
 
 [project.scripts]
 # Equivalent to "python -m pwaccess". Generates peewee models from an
@@ -66,11 +118,31 @@ Issues = "https://github.com/zorderelda/peewee-access/issues"
 #   pwaccess-pwiz -e access C:/data/app.accdb > models.py
 pwaccess-pwiz = "pwaccess.__main__:main"
 
+[tool.setuptools.dynamic]
+version = {attr = "pwaccess.__version__"}
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "driver: requires a live Microsoft Access ODBC driver",
+    "adox: requires the ADOX COM interface (pywin32 on Windows)",
+]
 
 [tool.ruff]
 line-length = 79
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
+
+# The test suite is tab-indented throughout, which is a deliberate style
+# choice rather than an accident. Exempt it from the space-indentation
+# rules instead of reformatting 800 lines; everything else still applies.
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["W191", "E101"]
+
+[tool.ruff.format]
+exclude = ["tests/*"]

@@ -1,9 +1,19 @@
 """Connection pooling for the Access backend."""
 
-import pyodbc
 from peewee import ImproperlyConfigured
 
 from .database import AccessDatabase
+
+# Guarded exactly as in database.py and _drivers.py. pyodbc is a hard
+# dependency of the package, but importing pwaccess must still work without
+# it: an unguarded import here would make the whole package unimportable on
+# any machine that lacks the driver -- including a Linux checkout running
+# the driver-free half of the test suite -- and would pre-empt the specific
+# "pip install pyodbc" message AccessDatabase._connect() exists to give.
+try:
+    import pyodbc
+except ImportError:  # pragma: no cover
+    pyodbc = None
 
 try:
     from playhouse.pool import PooledDatabase as _PooledDatabase
@@ -51,6 +61,11 @@ if _PooledDatabase is not None:
             ``getinfo`` asks the driver about itself over the connection
             handle. It reads no table, needs no permission, and raises only
             when the handle is genuinely unusable.
+
+            The module-level ``pyodbc`` is not re-checked for ``None``
+            here: without pyodbc there is no way to have obtained *conn* in
+            the first place, because ``AccessDatabase._connect()`` refuses
+            before any connection exists.
             """
             try:
                 conn.getinfo(pyodbc.SQL_DATA_SOURCE_READ_ONLY)
