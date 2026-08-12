@@ -54,6 +54,31 @@ pwaccess.list_access_drivers()
 
 ---
 
+## Connection options
+
+Keyword arguments other than `driver` and `password` become extra
+`KEY=VALUE` pairs in the ODBC connection string:
+
+```python
+db = AccessDatabase(r'C:\data\myapp.accdb', Exclusive='Yes')
+```
+
+`ExtendedAnsiSQL=1` is sent by default, which selects the driver's ANSI-92
+query mode. ANSI-89 — the driver's own default — has no grammar for a
+referential action, so the `ON DELETE CASCADE` / `ON DELETE SET NULL` that
+peewee emits for `ForeignKeyField(on_delete=...)` is rejected with
+`42000 Syntax error in CONSTRAINT clause`, and the table cannot be created
+at all. Pass `ExtendedAnsiSQL=0` to opt back out; an explicit setting always
+wins over the default.
+
+`LIKE` is unaffected either way. The two ANSI modes are documented to spell
+the wildcards `*`/`?` and `%`/`_`, but that split belongs to the Access UI
+and DAO — the ODBC driver takes `%`/`_` in both modes and treats `*`/`?` as
+literals in both, so `.contains()`, `.startswith()` and `.endswith()` behave
+the same under either setting.
+
+---
+
 ## Connection pooling
 
 ```python

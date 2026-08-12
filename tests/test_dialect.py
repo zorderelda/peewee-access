@@ -37,7 +37,8 @@ def Thing(offline_db):
 def test_connection_string_basics():
 	db = pwaccess.AccessDatabase(r'C:\data\app.accdb', driver='Fake Driver')
 	built = db._build_connection_string(r'C:\data\app.accdb')
-	assert built == 'Driver={Fake Driver};DBQ=C:\\data\\app.accdb'
+	assert built == ('Driver={Fake Driver};DBQ=C:\\data\\app.accdb;'
+	                 'ExtendedAnsiSQL=1')
 
 
 ##
@@ -54,6 +55,45 @@ def test_password_is_sent():
 def test_connect_params_are_appended():
 	db = pwaccess.AccessDatabase(r'C:\a.accdb', driver='D', Exclusive='Yes')
 	assert 'Exclusive=Yes' in db._build_connection_string(r'C:\a.accdb')
+
+
+# ---------------------------------------------------------------------------
+# ANSI-92 query mode
+# ---------------------------------------------------------------------------
+
+##
+# @brief ANSI-92 mode must be requested by default.
+#
+# The driver parses in ANSI-89 mode otherwise, which has no grammar for the
+# ON DELETE actions peewee emits for ForeignKeyField(on_delete=...), so every
+# such create_table() fails with "42000 Syntax error in CONSTRAINT clause".
+#
+def test_ansi_92_is_requested_by_default():
+	db = pwaccess.AccessDatabase(r'C:\a.accdb', driver='D')
+	assert 'ExtendedAnsiSQL=1' in db._build_connection_string(r'C:\a.accdb')
+
+
+##
+# @brief An explicit setting must replace the default, not join it.
+#
+# Naming the keyword twice would leave it to the driver which occurrence
+# wins, so the caller's value has to be the only one present.
+#
+@pytest.mark.parametrize('keyword', ['ExtendedAnsiSQL', 'extendedansisql',
+                                     'EXTENDEDANSISQL'])
+def test_ansi_92_can_be_overridden(keyword):
+	db = pwaccess.AccessDatabase(r'C:\a.accdb', driver='D', **{keyword: 0})
+	built = db._build_connection_string(r'C:\a.accdb')
+	assert '%s=0' % keyword in built
+	assert built.lower().count('extendedansisql') == 1
+
+
+##
+# @brief The pooled subclass inherits the ANSI-92 default.
+#
+def test_pooled_database_requests_ansi_92():
+	db = pwaccess.PooledAccessDatabase(r'C:\a.accdb', driver='D')
+	assert 'ExtendedAnsiSQL=1' in db._build_connection_string(r'C:\a.accdb')
 
 
 ##

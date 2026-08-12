@@ -63,7 +63,9 @@ class AccessDatabase(Database):
         string.
     :param kwargs: Further keyword arguments become additional
         ``KEY=VALUE`` pairs in the ODBC connection string, for example
-        ``Exclusive='Yes'``.
+        ``Exclusive='Yes'``. ``ExtendedAnsiSQL=1`` is sent by default and
+        can be overridden here; see :meth:`_build_connection_string` for
+        what depends on it.
 
     Usage::
 
@@ -112,6 +114,10 @@ class AccessDatabase(Database):
     safe_drop_index = False     # no DROP INDEX IF EXISTS
     sequences = False
     truncate_table = False      # no TRUNCATE TABLE; DELETE is issued
+
+    #: Connection-string keyword that puts the Access ODBC driver into
+    #: ANSI-92 query mode. See :meth:`_build_connection_string`.
+    _ANSI_92_KEYWORD = 'ExtendedAnsiSQL'
 
     #: peewee date-part names mapped to Access ``DatePart()`` interval codes.
     _DATE_PART_MAP = {
@@ -167,6 +173,29 @@ class AccessDatabase(Database):
         """
         Assemble the ODBC connection string for *filepath*.
 
+        ``ExtendedAnsiSQL=1`` is included by default, which puts the driver
+        into ANSI-92 query mode. Without it the driver parses in ANSI-89
+        mode, which has no grammar for a referential action: peewee emits
+        ``ON DELETE CASCADE`` / ``ON DELETE SET NULL`` for
+        ``ForeignKeyField(on_delete=...)``, and every such
+        ``create_table()`` fails with *42000 Syntax error in CONSTRAINT
+        clause*. The constraint name is not involved -- a ``FOREIGN KEY``
+        carrying no action is accepted in either mode, named or bare. It
+        is the action alone that ANSI-89 rejects.
+
+        ``LIKE`` is *not* affected, contrary to what the ANSI-89/92
+        difference suggests. The two modes are documented to spell the
+        wildcards ``*``/``?`` and ``%``/``_`` respectively, but that split
+        belongs to the Access UI and DAO. The ODBC driver takes ``%`` and
+        ``_`` in both modes and treats ``*`` and ``?`` as literals in
+        both, so peewee's ``.contains()``, ``.startswith()`` and
+        ``.endswith()`` were already correct before this default and are
+        unchanged by it. Verified against the ACE driver; see
+        ``tests/test_live_ansi.py``.
+
+        Pass ``ExtendedAnsiSQL=0`` (or any other value) as a keyword
+        argument to override it; an explicit setting always wins.
+
         :param redact: Replace the password with ``***``. Set when the
             string is going somewhere a human will read -- an exception
             message, a log line -- rather than to the driver. A connection
@@ -178,6 +207,15 @@ class AccessDatabase(Database):
         parts = ['Driver={%s}' % driver, 'DBQ=%s' % filepath]
         if self._password:
             parts.append('PWD=%s' % ('***' if redact else self._password))
+
+        # ODBC keywords are case-insensitive, so an override has to be
+        # matched case-insensitively too. Repeating the keyword instead
+        # would leave which of the two wins up to the driver.
+        overridden = any(key.lower() == self._ANSI_92_KEYWORD.lower()
+                         for key in self.connect_params)
+        if not overridden:
+            parts.append('%s=1' % self._ANSI_92_KEYWORD)
+
         for key, value in self.connect_params.items():
             parts.append('%s=%s' % (key, value))
         return ';'.join(parts)

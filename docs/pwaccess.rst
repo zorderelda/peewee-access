@@ -105,6 +105,24 @@ Connecting
         db = AccessDatabase(r'C:\data\legacy.mdb', password='secret')
         db = AccessDatabase(r'C:\data\app.accdb', Exclusive='Yes')
 
+    ``ExtendedAnsiSQL=1`` is sent by default, selecting the driver's ANSI-92
+    query mode. ANSI-89 -- what the driver falls back to -- has no grammar
+    for a referential action, so the ``ON DELETE CASCADE`` or ``ON DELETE
+    SET NULL`` that peewee emits for
+    :py:class:`~peewee.ForeignKeyField` ``(on_delete=...)`` is rejected with
+    *42000 Syntax error in CONSTRAINT clause* and the table cannot be
+    created. A ``FOREIGN KEY`` carrying no action is accepted either way.
+    Pass ``ExtendedAnsiSQL=0`` to opt out; an explicit setting always wins.
+
+    .. note::
+       ``LIKE`` is unaffected by the query mode. The ANSI-89 and ANSI-92
+       modes are documented to spell the wildcards ``*``/``?`` and
+       ``%``/``_`` respectively, but that split belongs to the Access UI and
+       to DAO. The ODBC driver accepts ``%`` and ``_`` under both modes and
+       treats ``*`` and ``?`` as literal characters under both, so
+       ``.contains()``, ``.startswith()`` and ``.endswith()`` behave
+       identically either way.
+
 .. py:class:: PooledAccessDatabase(database, max_connections=20, stale_timeout=None, timeout=0, **kwargs)
 
     :py:class:`AccessDatabase` with connection pooling, composed from

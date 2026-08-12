@@ -5,6 +5,43 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] — 2026-08-12
+
+### Fixed
+
+- **`ForeignKeyField(on_delete=...)` could not create its table.** The
+  connection string never asked for ANSI-92 query mode, so the driver
+  parsed in ANSI-89, which has no grammar for a referential action. The
+  `ON DELETE CASCADE` / `ON DELETE SET NULL` peewee emits was rejected with
+  `42000 Syntax error in CONSTRAINT clause`, failing `create_table()` for
+  any model declaring `on_delete`. `ExtendedAnsiSQL=1` is now sent by
+  default. A `FOREIGN KEY` carrying no action was accepted in either mode,
+  named or bare, so only models using `on_delete` were affected.
+
+### Changed
+
+- Connections now include `ExtendedAnsiSQL=1`. Pass `ExtendedAnsiSQL=0` as
+  a keyword argument to `AccessDatabase` to restore the previous mode; an
+  explicit setting always wins over the default. Beyond accepting
+  referential actions, ANSI-92 mode reserves more words — identifiers are
+  quoted with `[]` throughout, so this is a concern only for hand-written
+  SQL passed through `execute_sql()`.
+
+### Testing
+
+- `tests/test_live_ansi.py`, covering both query modes against a real
+  driver: `ON DELETE` accepted under ANSI-92 and rejected under ANSI-89,
+  `CASCADE` actually cascading rather than merely parsing, and the `LIKE`
+  wildcard behaviour below.
+- Recorded a non-finding. `LIKE` was expected to be a second casualty of
+  ANSI-89, since the two modes are documented to spell the wildcards `*`/`?`
+  and `%`/`_` respectively, and peewee emits `%`/`_`. It is not: that split
+  belongs to the Access UI and DAO, and the ODBC driver takes `%`/`_` in
+  both modes while treating `*`/`?` as literals in both. `.contains()`,
+  `.startswith()` and `.endswith()` were correct before this release and
+  are unchanged by it. Asserted in both modes so the plausible-but-wrong
+  version of the story cannot creep back in.
+
 ## [1.0.0] — 2026-08-11
 
 First public release.
@@ -86,4 +123,5 @@ First public release.
   date and time helpers, pagination argument handling, and packaging
   invariants.
 
+[1.0.1]: https://github.com/zorderelda/peewee-access/releases/tag/v1.0.1
 [1.0.0]: https://github.com/zorderelda/peewee-access/releases/tag/v1.0.0
