@@ -5,6 +5,28 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Testing
+
+- **Live-test availability is now probed rather than assumed.** The ADOX
+  check only confirmed that `win32com` imported, which is not evidence that
+  ACE works: it has been observed answering `REGDB_E_CLASSNOTREG`
+  transiently on a machine where the provider is correctly registered and
+  the DLL present. Every `adox`-marked test then failed at file creation
+  instead of skipping, burying one real cause under dozens of errors. The
+  check now creates a database file through raw COM — deliberately not
+  through `create_database_file()`, since probing with the code under test
+  would let a regression in it disable the tests that would catch the
+  regression.
+- **`--require-driver`.** Turns a skipped live test into an error. The live
+  tests are the only place the driver is exercised — CI runs the offline
+  half on Linux — so an ordinary green run on a machine without a working
+  driver means the release was never tested against a database. Run
+  `pytest --require-driver` before tagging.
+- A run that skips live tests now prints a **live coverage** summary saying
+  so, rather than reporting an unqualified pass.
+
 ## [1.0.2] — 2026-08-13
 
 ### Fixed

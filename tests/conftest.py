@@ -10,6 +10,11 @@
 # Access Database Engine installed.
 #
 
+import collections
+import functools
+import os
+import tempfile
+
 import pytest
 
 import pwaccess
@@ -28,40 +33,121 @@ def pytest_configure(config):
 
 
 ##
-# @brief Whether a usable Access ODBC driver is present.
-# @return True when pyodbc reports an Access driver.
+# @brief Add --require-driver.
 #
-def _has_driver():
-	try:
-		return pwaccess.detect_driver() is not None
-	except Exception:
-		return False
+def pytest_addoption(parser):
+	parser.addoption(
+		'--require-driver', action='store_true', default=False,
+		help='Fail instead of skipping when the Access driver or ADOX is '
+		     'unavailable. Intended for the run before tagging a release: '
+		     'without it a machine with no driver reports a clean pass '
+		     'having exercised no live behaviour at all.')
 
 
 ##
-# @brief Whether ADOX can be dispatched.
-# @return True when pywin32 is importable.
+# @brief Whether a usable Access ODBC driver is present.
+# @return An (available, reason) pair; reason is '' when available.
 #
-def _has_adox():
+@functools.lru_cache(maxsize=None)
+def _driver_status():
 	try:
-		import win32com.client  # noqa: F401
-	except ImportError:
-		return False
-	return True
+		driver = pwaccess.detect_driver()
+	except Exception as exc:
+		return False, 'detect_driver() raised %s: %s' % (
+			type(exc).__name__, exc)
+	if driver is None:
+		return False, 'no Microsoft Access ODBC driver is installed'
+	return True, ''
 
 
-HAS_DRIVER = _has_driver()
-HAS_ADOX = _has_adox()
+##
+# @brief Whether ADOX can actually create a database file.
+# @return An (available, reason) pair; reason is '' when available.
+#
+# Importing win32com is not the same as being able to use it. ACE has been
+# observed to answer REGDB_E_CLASSNOTREG transiently on a machine where the
+# provider is correctly registered and the DLL present, and an import check
+# cannot see that: every adox-marked test then fails at file creation
+# rather than skipping, burying the one real cause under dozens of errors.
+#
+# Probed through raw COM rather than through pwaccess.create_database_file()
+# on purpose. Probing with the code under test would let a regression *in*
+# that code disable the tests that would have caught it -- the suite would
+# report "ADOX unavailable", skip, and pass green.
+#
+@functools.lru_cache(maxsize=None)
+def _adox_status():
+	try:
+		import win32com.client
+	except ImportError as exc:
+		return False, 'pywin32 is not installed (%s)' % exc
+
+	directory = tempfile.mkdtemp(prefix='pwaccess-probe-')
+	path = os.path.join(directory, 'probe.accdb')
+	try:
+		catalog = win32com.client.Dispatch('ADOX.Catalog')
+		catalog.Create('Provider=Microsoft.ACE.OLEDB.12.0;Data Source=%s;'
+		               % path)
+		del catalog
+	except Exception as exc:
+		return False, 'ADOX could not create a database file (%s)' % exc
+	finally:
+		try:
+			if os.path.isfile(path):
+				os.remove(path)
+			os.rmdir(directory)
+		except OSError:
+			pass
+	return True, ''
+
+
+#: Live tests skipped this run, keyed by the marker that was unsatisfiable.
+#: Reported by pytest_terminal_summary so a green run cannot quietly mean
+#: "none of the database behaviour was exercised".
+_skipped_counts = collections.Counter()
+_skipped_reasons = {}
 
 
 ##
 # @brief Skip driver/adox-marked tests when the prerequisite is missing.
 #
+# With --require-driver the same condition is a failure instead, so a
+# release run cannot pass without having touched a real database.
+#
 def pytest_runtest_setup(item):
-	if 'driver' in item.keywords and not HAS_DRIVER:
-		pytest.skip('no Microsoft Access ODBC driver installed')
-	if 'adox' in item.keywords and not HAS_ADOX:
-		pytest.skip('pywin32 / ADOX not available')
+	require = item.config.getoption('--require-driver')
+
+	for marker, status in (('driver', _driver_status),
+	                       ('adox', _adox_status)):
+		if marker not in item.keywords:
+			continue
+		available, reason = status()
+		if available:
+			continue
+
+		message = '%s unavailable: %s' % (marker, reason)
+		if require:
+			pytest.fail(message + ' (--require-driver)', pytrace=False)
+		_skipped_counts[marker] += 1
+		_skipped_reasons[marker] = reason
+		pytest.skip(message)
+
+
+##
+# @brief State plainly when a run covered none of the live behaviour.
+#
+def pytest_terminal_summary(terminalreporter):
+	if not _skipped_counts:
+		return
+
+	terminalreporter.write_sep('=', 'live coverage', yellow=True)
+	for marker, count in sorted(_skipped_counts.items()):
+		terminalreporter.write_line(
+			'%d test(s) requiring %r were SKIPPED: %s'
+			% (count, marker, _skipped_reasons[marker]), yellow=True)
+	terminalreporter.write_line(
+		'This run did not exercise a real Access database. Re-run with '
+		'--require-driver to turn the above into failures.', yellow=True)
 
 
 # ---------------------------------------------------------------------------
