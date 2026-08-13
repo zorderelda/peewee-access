@@ -109,7 +109,7 @@ doc = ["sphinx>=7.4.7"]
 [project.urls]
 Homepage = "https://github.com/zorderelda/peewee-access"
 Issues = "https://github.com/zorderelda/peewee-access/issues"
-Documentation = "https://github.com/zorderelda/peewee-access#readme"
+Documentation = "https://zorderelda.github.io/peewee-access/"
 Changelog = "https://github.com/zorderelda/peewee-access/releases"
 
 [project.scripts]

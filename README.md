@@ -308,6 +308,54 @@ CI covers both ends on every run: 3.9 through 3.14, the 3.9 lockfile, and a
 job that re-resolves everything from PyPI with no cache so an upstream
 release that breaks the backend shows up here first.
 
+---
+
+## Development
+
+```
+pip install -e ".[test]"
+python -m pytest
+```
+
+The suite is in two halves. Most of it covers SQL generation, URL parsing,
+packaging invariants and the peewee patches — none of which need a database,
+so they run anywhere, including the Linux runners CI uses. The rest talk to a
+real `.accdb` or `.mdb` file and are marked `driver` (needs the ODBC driver)
+or `adox` (additionally needs ADOX over COM), so they skip on a machine
+without the Access Database Engine.
+
+| Command | Runs |
+|---|---|
+| `pytest` | Everything available on this machine |
+| `pytest -m "not driver"` | The driver-free half only |
+| `pytest -m driver` | The live half only |
+| `pytest --require-driver` | Everything, failing rather than skipping |
+
+**Run `pytest --require-driver` before tagging a release.** The live tests
+are the only place the driver is exercised anywhere — CI runs the driver-free
+half on Linux, where they cannot run — so a release is only ever tested
+against a real database on a developer's machine. Without the flag, a machine
+whose driver is missing or temporarily unwell reports a clean green pass
+having touched no database at all. When live tests are skipped, the run ends
+with a `live coverage` summary saying so.
+
+Availability is probed, not assumed. The `adox` check creates a database file
+through raw COM rather than importing `win32com` and hoping, because ACE has
+been seen answering `REGDB_E_CLASSNOTREG` on a machine where the provider is
+correctly registered — a fault an import check turns into dozens of errors
+instead of one clear skip. The probe deliberately avoids
+`create_database_file()`: probing with the code under test would let a
+regression in it disable the tests that would have caught the regression.
+
+Documentation is Sphinx, published to
+[GitHub Pages](https://zorderelda.github.io/peewee-access/) on every push to
+`main`:
+
+```
+pip install -e ".[doc]"
+sphinx-build -b html -W docs docs/_build/html
+```
+
 ## License
 
 MIT

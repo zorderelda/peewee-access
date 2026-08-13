@@ -1,0 +1,81 @@
+name: Documentation
+
+# Builds the Sphinx documentation and publishes it to GitHub Pages, so the
+# "Documentation" link on the PyPI project page points at the rendered docs
+# rather than back at the README.
+#
+# One-time repository setup, which cannot be done from a workflow file:
+#
+#     Settings -> Pages -> Build and deployment -> Source: GitHub Actions
+#
+# Until that is set, this workflow's deploy job fails with "Pages site not
+# found". Nothing else in the repository depends on it.
+#
+# The site lands at https://zorderelda.github.io/peewee-access/ and is
+# rebuilt on every push to main. ci.yml also builds the documentation on
+# pull requests, which is what gates a broken build before it merges; this
+# workflow publishes rather than validates.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time. Queued rather than cancelled: a superseded run
+# would otherwise leave the site built from an older commit.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      # Installed exactly as ci.yml does it, and for the same reason.
+      # --no-deps because pywin32 is a runtime dependency with no Linux
+      # wheel, so ".[doc]" cannot resolve here; docs/conf.py mocks pyodbc,
+      # win32com and pythoncom, so autodoc needs neither. The Alabaster
+      # theme ships with Sphinx, so there is no theme to install.
+      - name: Install
+        run: |
+          pip install -e . --no-deps
+          pip install peewee sphinx
+
+      # -W for the same reason ci.yml uses it: a broken cross-reference
+      # should fail the build rather than publish a page with a dead link.
+      - name: Build the documentation
+        run: sphinx-build -b html -W docs docs/_build/html
+
+      # Pages deployed from an artifact is not run through Jekyll, so the
+      # underscore-prefixed directories Sphinx emits (_static, _sources)
+      # are served as-is. .nojekyll makes that explicit and costs nothing
+      # if the deployment path ever changes.
+      - name: Disable Jekyll processing
+        run: touch docs/_build/html/.nojekyll
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
+        with:
+          path: docs/_build/html
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write           # required to publish
+      id-token: write        # required for the deployment's OIDC token
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128  # v5.0.0

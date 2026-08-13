@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **The docs are published to GitHub Pages**, built by a new
+  `docs.yml` workflow on every push to `main`. `ci.yml` still builds them
+  under `-W` on pull requests, which is what gates a broken build before it
+  merges; the new workflow publishes rather than validates.
+- **The `Documentation` URL in the package metadata now points at the
+  rendered documentation** (`https://zorderelda.github.io/peewee-access/`)
+  rather than back at the README anchor, so the link on the PyPI project
+  page reaches something more than the front page. This reaches PyPI with
+  the next release, since project URLs are part of a release's metadata.
+- A **Development** page covering the two test halves, the `driver` and
+  `adox` markers, `--require-driver`, how availability is probed, building
+  the documentation, and how the tag-triggered release works. Summarized in
+  the README as well.
+
 ### Testing
 
 - **Live-test availability is now probed rather than assumed.** The ADOX
