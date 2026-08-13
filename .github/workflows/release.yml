@@ -68,6 +68,31 @@ jobs:
       - name: Validate the metadata
         run: twine check dist/*
 
+      # Nothing reaches PyPI untested. Until this existed, release.yml
+      # built and published without running a single test: ci.yml does
+      # trigger on a v* tag, but the two workflows race, so the upload did
+      # not wait for the result. A tag on a commit with failing tests
+      # published anyway, and a PyPI filename can never be reused.
+      #
+      # The built wheel is installed rather than the source tree, so what
+      # gets tested is the artifact that will actually ship -- a packaging
+      # mistake that omits a module fails here rather than on a user's
+      # machine. The src/ layout means the import resolves to the
+      # installed package, not to the checkout.
+      - name: Install the built wheel and the test dependencies
+        shell: bash
+        run: |
+          pip install dist/*.whl
+          pip install pytest flask pydantic
+
+      # -m "not driver" keeps the gate deterministic. GitHub's Windows
+      # images do not reliably ship the Access Database Engine, so the
+      # live tests would skip or run depending on the runner, and a
+      # release gate should not vary with that. ci.yml already picks them
+      # up opportunistically on its Windows jobs.
+      - name: Run the driver-free test suite against the wheel
+        run: python -m pytest -m "not driver"
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: distributions

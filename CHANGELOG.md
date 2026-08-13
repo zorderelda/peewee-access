@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- **Nothing reaches PyPI untested.** `release.yml` built and published
+  without running a single test. `ci.yml` does trigger on a `v*` tag, but
+  the two workflows race and the upload never waited for the result, so a
+  tag on a commit with failing tests published anyway — and a PyPI filename
+  can never be reused. The build job now installs the built wheel and runs
+  the driver-free suite against it before the artifacts are uploaded, so a
+  packaging mistake that omits a module fails the release rather than a
+  user's install.
+- **Release tags are protected** against deletion and being moved. Because
+  PyPI filenames are immutable, a tag repointed after publication
+  misrepresents what was shipped for good.
+
 ### Documentation
 
 - **The docs are published to GitHub Pages**, built by a new
