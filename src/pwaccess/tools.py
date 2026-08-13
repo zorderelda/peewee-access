@@ -45,6 +45,7 @@ except ImportError:  # pragma: no cover - playhouse ships with peewee
     Introspector = Metadata = UnknownField = None
 
 __all__ = [
+    'IGNORED_URL_PARAMS',
     'AccessMetadata',
     'AccessMigrator',
     'access_url_connect',
@@ -391,22 +392,77 @@ def access_url_to_path(database, host=None):
     return database
 
 
+#: Connection parameters ``playhouse.db_url`` produces that an Access file
+#: database cannot use. See :func:`_drop_unusable_params`.
+IGNORED_URL_PARAMS = ('user', 'port')
+
+
+def _drop_unusable_params(kwargs):
+    """
+    Discard the db_url parameters Access has no use for.
+
+    ``playhouse.db_url.connect()`` builds one keyword dict from the URL and
+    from any ``**connect_params`` the caller passes, then hands the whole
+    thing to whichever class is registered for the scheme. That dict is
+    shaped for a network database: ``database``, ``user``, ``password``,
+    ``host``, ``port``. Access is a file, so ``user`` and ``port`` are
+    meaningless to it -- but every unrecognized keyword becomes a
+    ``KEY=VALUE`` pair in the ODBC connection string, which is how
+    ``connect('access:///C:/app.accdb', user='jeff')`` ended up sending
+    ``;user=jeff`` to the driver.
+
+    Dropping them keeps the factories substitutable for any other db_url
+    backend: code that builds one parameter dict and connects several
+    databases with it works against Access without special-casing.
+
+    ``host`` is not dropped -- :func:`access_url_to_path` needs it to
+    recover a drive letter or UNC server -- and neither is ``password``,
+    which Access sends as ``PWD``.
+
+    :param kwargs: The keyword dict db_url assembled. Not modified.
+    :returns: A copy with :data:`IGNORED_URL_PARAMS` removed.
+    """
+    ignored = {key: kwargs[key] for key in IGNORED_URL_PARAMS
+               if key in kwargs}
+    if not ignored:
+        return kwargs
+
+    # Debug rather than a warning: a caller reusing one parameter dict
+    # across backends is doing something reasonable, and this is the
+    # expected outcome rather than a mistake worth interrupting them over.
+    logger.debug('Ignoring db_url parameters an Access file database has no '
+                 'use for: %s.',
+                 ', '.join(sorted(ignored)))
+    return {key: value for key, value in kwargs.items()
+            if key not in ignored}
+
+
 def access_url_connect(database=None, host=None, **kwargs):
     """
     Factory registered with ``playhouse.db_url`` for the ``access`` scheme.
 
+    Accepts the full parameter set db_url hands a registered class and
+    ignores the ones a file database cannot use; see
+    :func:`_drop_unusable_params`.
+
     :returns: A configured :class:`AccessDatabase`.
     """
-    return AccessDatabase(access_url_to_path(database, host), **kwargs)
+    return AccessDatabase(access_url_to_path(database, host),
+                          **_drop_unusable_params(kwargs))
 
 
 def access_pool_url_connect(database=None, host=None, **kwargs):
     """
     Factory registered with ``playhouse.db_url`` for ``access+pool``.
 
+    Accepts the full parameter set db_url hands a registered class and
+    ignores the ones a file database cannot use; see
+    :func:`_drop_unusable_params`.
+
     :returns: A configured :class:`PooledAccessDatabase`.
     """
-    return PooledAccessDatabase(access_url_to_path(database, host), **kwargs)
+    return PooledAccessDatabase(access_url_to_path(database, host),
+                                **_drop_unusable_params(kwargs))
 
 
 # ---------------------------------------------------------------------------

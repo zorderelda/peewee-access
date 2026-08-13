@@ -5,6 +5,25 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.2] — 2026-08-13
+
+### Fixed
+
+- **`db_url.connect()` forwarded unusable parameters to the ODBC driver.**
+  `playhouse.db_url.connect()` merges the URL with any `**connect_params`
+  and hands the whole set to the class registered for the scheme, and
+  `AccessDatabase` turns every keyword it does not recognize into a
+  `KEY=VALUE` pair in the connection string. A `user` or `port` — from the
+  URL authority, the query string or the keyword arguments — was therefore
+  sent to the driver verbatim as `;user=jeff;port=1234`. Both are now
+  dropped, so one parameter dict can serve Access and a network backend
+  without an Access special case. `password`, `host` and driver keywords
+  such as `Exclusive='Yes'` are unaffected.
+
+### Added
+
+- `pwaccess.IGNORED_URL_PARAMS`, the names the `access` schemes discard.
+
 ## [1.0.1] — 2026-08-12
 
 ### Fixed
@@ -123,5 +142,6 @@ First public release.
   date and time helpers, pagination argument handling, and packaging
   invariants.
 
+[1.0.2]: https://github.com/zorderelda/peewee-access/releases/tag/v1.0.2
 [1.0.1]: https://github.com/zorderelda/peewee-access/releases/tag/v1.0.1
 [1.0.0]: https://github.com/zorderelda/peewee-access/releases/tag/v1.0.0

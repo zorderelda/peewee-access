@@ -115,6 +115,21 @@ authority. Two lenient spellings are also accepted:
 
 Registered schemes: `access`, `msaccess`, `access+pool`, `msaccess+pool`.
 
+`connect()` merges the URL with any `**connect_params` you pass and hands the
+whole set to the backend, so the parameters a network database expects can
+arrive here too. `user` and `port` are meaningless to a file database and are
+silently ignored rather than being forwarded to the driver:
+
+```python
+params = {'user': 'jeff', 'port': 5432}          # shaped for Postgres
+db = connect('access:///C:/data/app.accdb', **params)   # both dropped
+```
+
+Everything else still reaches the ODBC connection string, so `password`
+(sent as `PWD`) and driver keywords such as `Exclusive='Yes'` work through a
+URL exactly as they do through the constructor. The ignored names are
+published as `pwaccess.IGNORED_URL_PARAMS`.
+
 ---
 
 ## Database tooling

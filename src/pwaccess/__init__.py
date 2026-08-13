@@ -56,6 +56,7 @@ from .exceptions import (
 from .orm_utils import AccessKeyValue, AccessPaginatedQuery, paginate
 from .pool import PooledAccessDatabase
 from .tools import (
+    IGNORED_URL_PARAMS,
     AccessMetadata,
     AccessMigrator,
     access_pool_url_connect,
@@ -66,7 +67,7 @@ from .tools import (
 )
 from .types import FIELD_TYPES, OPERATIONS
 
-__version__ = '1.0.1'
+__version__ = '1.0.2'
 
 __all__ = [
     'AccessConfigurationError',
@@ -80,6 +81,7 @@ __all__ = [
     'DriverNotFoundError',
     'FIELD_TYPES',
     'FileCreationError',
+    'IGNORED_URL_PARAMS',
     'OPERATIONS',
     'PooledAccessDatabase',
     'access_pool_url_connect',

@@ -158,6 +158,27 @@ Four schemes are registered with :py:mod:`playhouse.db_url` on import:
     db = connect('access:///C:/data/app.accdb')
     db = connect('access+pool:///C:/data/app.accdb?max_connections=8')
 
+:py:func:`playhouse.db_url.connect` merges the URL with any
+``**connect_params`` given to it and passes the whole set to the class
+registered for the scheme. That set is shaped for a network database, so
+parameters Access cannot use may arrive with it. ``user`` and ``port`` are
+meaningless to a file database and are ignored rather than forwarded:
+
+.. code-block:: python
+
+    params = {'user': 'jeff', 'port': 5432}   # shaped for Postgres
+    db = connect('access:///C:/data/app.accdb', **params)
+
+Both are dropped, whether they came from the URL's authority, its query
+string, or the keyword arguments. Everything else still becomes part of the
+ODBC connection string, so ``password`` (sent as ``PWD``) and driver
+keywords such as ``Exclusive='Yes'`` work through a URL exactly as they do
+through the constructor.
+
+.. py:data:: IGNORED_URL_PARAMS
+
+    The parameter names the ``access`` schemes discard: ``('user', 'port')``.
+
 Windows paths do not survive :py:func:`urllib.parse.urlparse` intact, so
 three spellings are accepted and all yield the same path:
 
