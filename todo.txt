@@ -1,0 +1,166 @@
+peewee signals / Access data macros -- investigation notes
+==========================================================
+
+Question: does peewee's pre_save / post_save work on the Access backend,
+and should pwaccess expose it under Access's Before/After (Change, Delete,
+Insert, Update) naming?
+
+Short answer: signals already work and need no adaptation. The Access
+Before/After names belong to a different feature (data macros) at a
+different layer, so do NOT alias one onto the other.
+
+
+1. peewee signals -- already supported
+--------------------------------------
+
+Works unchanged; covered by a live test at tests/test_live_orm_utils.py:356
+(post_save created=True/False, then post_delete, in order, against a real
+.accdb). Signals are a pure Model mixin dispatched in Python before any SQL
+is generated, so none of the Access dialect patches are involved.
+
+Signals and callback signatures:
+
+    pre_init(sender, instance)
+    pre_save(sender, instance, created)
+    post_save(sender, instance, created)
+    pre_delete(sender, instance)
+    post_delete(sender, instance)
+
+Two usage points our current docs do not mention and should:
+
+  a. The model must subclass playhouse.signals.Model, NOT peewee.Model.
+     A plain model never dispatches anything -- it fails silently.
+
+  b. Signals fire only through the high-level instance methods, per
+     peewee's own docs: "Signals fire only through the high-level instance
+     methods". insert(), update() and delete() queries involve no instance
+     and dispatch nothing.
+
+Connect / disconnect:
+
+    @post_save(sender=MyModel, name='project.cache_buster')
+    def cache_bust(sender, instance, created): ...
+
+    pre_delete.connect(on_delete, sender=MyModel)
+    post_save.disconnect(name='project.cache_buster', sender=MyModel)
+
+pwaccess-specific edges of point (b) worth documenting:
+
+  - insert_many() split into N separate INSERT statements by this driver
+    (see tests/test_insert_split.py) is still ONE query object, so it emits
+    zero signals despite producing N inserts. Easy to assume otherwise.
+  - AccessKeyValue writes through query-level UPDATE-then-INSERT, so it is
+    signal-silent too.
+
+
+2. Detecting data macros from pwaccess -- NOT POSSIBLE, drop the idea
+---------------------------------------------------------------------
+
+Floated an AccessMetadata helper that would report "this table has data
+macros". It cannot be built. Three independent walls:
+
+  - ODBC cannot read the system catalogue. Already established in-repo:
+    tests/test_live_tooling.py:130 asserts SELECT ... FROM MSysObjects
+    raises, and src/pwaccess/pool.py:53 documents why (ACE denies SELECT on
+    system tables unless explicitly granted -- this is what broke the old
+    liveness probe). MSysAccessStorage, where objects containing code get
+    their rows, is behind the same permission regime.
+
+  - ADOX has no collection for them. The catalog exposes Tables, Columns,
+    Indexes, Keys, Views and Procedures; Procedures means saved queries.
+    Data macros are not queries and appear nowhere in that object model.
+
+  - The only programmatic route needs Access itself, not just ACE:
+        Application.SaveAsText acTableDataMacro, "Tbl", path   ' const 12
+        Application.LoadFromText acTableDataMacro, "Tbl", path
+    These are members of the Access Application object. On a machine with
+    only the Database Engine redistributable installed -- which is all
+    pwaccess requires -- there is no route at all.
+
+
+3. OPEN QUESTION -- do data macros fire on pwaccess writes?
+------------------------------------------------------------
+
+UNRESOLVED. Do not assert either way in the docs until tested.
+
+Microsoft documents data macros as responding to DML at the table level
+rather than the form level, but no Microsoft page found states what happens
+for an external ODBC/OLEDB client. Field reports point the other way:
+multiple threads report After Insert not firing when the table is reached
+through a link rather than opened natively.
+
+Cannot be settled in CI: authoring a data macro requires the Access UI, and
+the live tests only assume the ACE driver (tests/conftest.py:52). Needs a
+Windows box with full Access installed.
+
+Manual test procedure (needs Windows + Access, hence this branch):
+
+  1. In Access, create test.accdb with table T (id autonumber, name text,
+     audit_note text) and a second table AUDIT (id, msg, stamp).
+  2. On T, add an After Insert data macro: CreateRecord in AUDIT, set
+     msg = "fired for " & [T].[name].
+  3. Also add a Before Change macro that raises: RaiseError with a
+     recognisable message when [name] = "reject-me".
+  4. Close Access completely (release the .laccdb lock).
+  5. From Python, against the same file:
+         db = pwaccess.AccessDatabase(r'...\test.accdb')
+         T.create(name='via-pwaccess')          # instance path
+         T.insert_many([...]).execute()         # query path, split inserts
+         T.create(name='reject-me')             # should the Before Change
+                                                # macro block this?
+  6. Reopen in Access and check AUDIT.
+
+  Record for each of: instance save, split insert_many, and update/delete
+  -- whether the After macro fired, and whether Before Change could block
+  the write and what the Python-side error looked like (expect an opaque
+  pyodbc error if it does).
+
+  Worth repeating with the ACE OLEDB provider vs the ODBC driver -- they may
+  differ, and if they do that is the single most useful thing to write down.
+
+
+4. Planned doc change (not yet written -- pending item 3)
+---------------------------------------------------------
+
+New "Signals" subsection under ORM utilities in docs/pwaccess.rst:401. The
+existing one-line "Works unchanged" table row at docs/pwaccess.rst:417 stays
+as a pointer into it. Content:
+
+  - the playhouse.signals.Model base-class requirement
+  - a worked connect/disconnect example against an Access model
+  - the bulk-path exclusions, with the insert-split and AccessKeyValue
+    specifics from section 1
+  - a short "data macros are a different thing" note: .accdb only, authored
+    only in Access, invisible to ODBC and ADOX, behaviour for external
+    writers per whatever section 3 turns up, and a suspect when an ordinary
+    save() throws an opaque ODBC error
+
+Mirror the prose into src/pwaccess/orm_utils.py:16 and the README table row
+at README.md:147.
+
+Explicitly NOT doing: an AccessBeforeInsert-style alias layer over peewee's
+signals. Same words as Access's events, different execution layer (Python
+client vs engine), different coverage (ORM-only vs every writer including
+someone typing in the Access UI), different failure behaviour. Reusing
+Microsoft's vocabulary here would cost users a debugging session.
+
+
+Sources
+-------
+
+peewee ORM utilities, signals section:
+  https://docs.peewee-orm.com/en/latest/peewee/orm_utils.html#signals
+Create a data macro (Microsoft Support):
+  https://support.microsoft.com/en-us/office/create-a-data-macro-b1b94bca-4f17-47ad-a66d-f296ef834200
+Application.SaveAsText:
+  https://learn.microsoft.com/en-us/office/client-developer/access/desktop-database-reference/application-save-as-text
+Application.LoadFromText:
+  https://learn.microsoft.com/en-us/office/client-developer/access/desktop-database-reference/application-load-from-text
+Emulating Table Triggers with Access Data Macros:
+  https://www.oreilly.com/library/view/microsoft-access-2010/9780768695229/ch20.html
+MSysAccessStorage (Microsoft Q&A):
+  https://learn.microsoft.com/en-us/answers/questions/cb462e3e-cf75-437d-afff-7d32b9077d99/msysaccessstorage-what-is-it-for
+Data macro triggers/fires only under certain circumstances:
+  https://www.access-programmers.co.uk/forums/threads/data-macro-triggers-fires-only-under-certain-circumstances.316739/
+Data Macros Don't Work With Linked Tables:
+  https://www.pcreview.co.uk/threads/data-macros-dont-work-with-linked-tables.4046809/
