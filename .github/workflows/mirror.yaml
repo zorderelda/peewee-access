@@ -1,0 +1,30 @@
+ame: Mirror to somewherecloudy
+
+on:
+  push:
+    branches: ['**']
+    tags: ['**']
+  delete:
+
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.MIRROR_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p 2222 git.somewherecloudy.xyz >> ~/.ssh/known_hosts
+
+      - name: Push to mirror
+        run: |
+          git remote add mirror ssh://git@git.somewherecloudy.xyz:2222/zorderelda/Access-ORM.git
+          git push mirror --all
+          git push mirror --tags
