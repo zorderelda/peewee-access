@@ -25,6 +25,6 @@ jobs:
 
       - name: Push to mirror
         run: |
-          git remote add mirror ssh://git@git.somewherecloudy.xyz:2222/zorderelda/Access-ORM.git
+          git remote add mirror ssh://git@git.somewherecloudy.xyz:2222/zorderelda/peewee-access.git
           git push mirror --all
           git push mirror --tags
