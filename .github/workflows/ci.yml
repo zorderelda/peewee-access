@@ -117,6 +117,75 @@ jobs:
       - name: Test
         run: pytest -v
 
+  # The only job anywhere that exercises a real Access database.
+  #
+  # Everything else is driver-free by necessity: the Linux matrix cannot
+  # load an ODBC driver at all, and GitHub's Windows image ships no Access
+  # components -- no ACE, no ODBC driver, no OLE DB provider -- so the
+  # `windows` jobs above skip the ~80 live tests. That left the driver
+  # exercised only on a maintainer's machine, and a release validated by
+  # `pytest --require-driver` being remembered.
+  #
+  # This job installs the Access Database Engine 2016 redistributable and
+  # runs the suite with --require-driver, so a skip is a failure: if the
+  # install silently half-works, this goes red rather than quietly
+  # covering nothing.
+  #
+  # Deliberately NOT a required status check. It downloads 80MB from
+  # download.microsoft.com, and those URLs rot -- the 2010 redistributable
+  # link already 404s. A required check that depends on a third-party
+  # download blocks every merge the day Microsoft moves the file. Treat a
+  # red here as "investigate", not "the branch is broken".
+  live-driver:
+    name: windows live driver
+    runs-on: windows-latest
+    # Not needed for a documentation-only change, and it is the slowest
+    # job in the workflow.
+    if: github.event_name != 'schedule'
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # /quiet is enough on a runner image, which has no click-to-run
+      # Office for the installer to object to. The exit code is checked
+      # explicitly because the installer is happy to fail quietly.
+      - name: Install the Access Database Engine 2016 redistributable
+        shell: pwsh
+        run: |
+          $url = 'https://download.microsoft.com/download/3/5/C/35C84C36-661A-44E6-9324-8786B8DBE231/accessdatabaseengine_X64.exe'
+          Invoke-WebRequest -Uri $url -OutFile ace.exe -MaximumRedirection 5
+          $p = Start-Process .\ace.exe -ArgumentList '/quiet' -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Error "ACE installer exited with $($p.ExitCode)"
+            exit 1
+          }
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+
+      # Fails the job if the ODBC driver or the OLE DB provider is absent,
+      # so a broken install is diagnosed here rather than surfacing as a
+      # wall of confusing test errors further down.
+      - name: Verify the driver and the OLE DB provider registered
+        shell: pwsh
+        run: |
+          python -c "import pwaccess, pyodbc; d = pwaccess.iter_access_drivers(); print('Access drivers:', list(d)); print('All ODBC drivers:', pyodbc.drivers()); assert pwaccess.detect_driver(), 'no Access ODBC driver after install'"
+          python -c "import win32com.client, tempfile, os; p = os.path.join(tempfile.mkdtemp(), 'probe.accdb'); c = win32com.client.Dispatch('ADOX.Catalog'); c.Create('Provider=Microsoft.ACE.OLEDB.12.0;Data Source=%s;' % p); assert os.path.isfile(p), 'ADOX did not create a file'; print('ADOX OK')"
+
+      # --require-driver turns a skipped live test into an error. Without
+      # it this job could install nothing, skip all ~80 live tests and
+      # still report green, which is the exact failure it exists to
+      # prevent.
+      - name: Test, requiring the driver
+        run: pytest -v --require-driver
+
   docs:
     runs-on: ubuntu-latest
     steps:
