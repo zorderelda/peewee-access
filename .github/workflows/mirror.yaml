@@ -1,30 +1,49 @@
-ame: Mirror to somewherecloudy
+name: Mirror to somewherecloudy
 
 on:
   push:
     branches: ['**']
     tags: ['**']
   delete:
+  workflow_dispatch:
+  schedule:
+    # Safety net in case a push/delete event was missed.
+    - cron: '17 4 * * *'
 
+# Never let two mirror pushes race each other.
+concurrency:
+  group: mirror
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (full history)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - name: Clone (bare mirror of every ref)
+        run: |
+          git clone --mirror \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
+            repo.git
 
       - name: Set up SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.MIRROR_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.MIRROR_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -p 2222 git.somewherecloudy.xyz >> ~/.ssh/known_hosts
 
       - name: Push to mirror
+        working-directory: repo.git
         run: |
+          # Drop GitHub's pull-request refs; they are not real branches and
+          # Gitea maintains its own refs/pull/* namespace.
+          git for-each-ref --format='delete %(refname)' refs/pull | git update-ref --stdin
+
           git remote add mirror ssh://git@git.somewherecloudy.xyz:2222/zorderelda/peewee-access.git
-          git push mirror --all
-          git push mirror --tags
+          # --mirror pushes every ref as-is and deletes refs the source no
+          # longer has, so the destination ends up an exact copy.
+          git push --mirror mirror
