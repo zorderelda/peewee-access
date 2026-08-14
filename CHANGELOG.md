@@ -5,7 +5,14 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.3] — 2026-08-14
+
+**No functional change.** The package code is byte-identical to 1.0.2; a
+`diff` of `src/` between the two tags is empty. What reaches users is the
+corrected `Documentation` URL in the metadata, since project URLs are part
+of a release's metadata and cannot be updated in place. Everything else
+here is the release pipeline and the test suite — the machinery that
+decides whether a future release can be trusted.
 
 ### Security
 
@@ -49,13 +56,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   through `create_database_file()`, since probing with the code under test
   would let a regression in it disable the tests that would catch the
   regression.
-- **`--require-driver`.** Turns a skipped live test into an error. The live
-  tests are the only place the driver is exercised — CI runs the offline
-  half on Linux — so an ordinary green run on a machine without a working
-  driver means the release was never tested against a database. Run
-  `pytest --require-driver` before tagging.
+- **`--require-driver`.** Turns a skipped live test into an error, so a run
+  cannot pass having quietly exercised no database at all. Worth running
+  before tagging, and now also what makes the CI job below meaningful.
 - A run that skips live tests now prints a **live coverage** summary saying
   so, rather than reporting an unqualified pass.
+- **The live tests now run in CI**, in a `windows live driver` job that
+  installs the Access Database Engine redistributable and runs the suite
+  under `--require-driver`. Previously no job anywhere touched a real
+  database: the Linux matrix cannot load an ODBC driver, and GitHub's
+  Windows image ships no Access components, so the existing Windows jobs
+  skipped every live test. The driver was exercised only on a maintainer's
+  machine. First run: 263 passed, none skipped.
+
+  It is deliberately **not** a required status check. It downloads 80MB
+  from `download.microsoft.com` and those URLs rot — the 2010
+  redistributable link already 404s — so a required check would block every
+  merge the day Microsoft moves the file.
+
+### Maintenance
+
+- **Dependabot no longer proposes a lockfile that breaks Python 3.9.** It
+  had picked `constraints-py39.txt` up as a manifest and proposed pytest 9,
+  Sphinx 8 and alabaster 1.0 into it, all of which require Python 3.10+, in
+  a file that exists to pin one verified resolution for 3.9. The `pip`
+  entry carried a comment claiming it would not touch that file; the
+  comment was an assumption, not a rule. It cannot be scoped away —
+  `dependabot.yml` has no `exclude-paths`, and `ignore` matches dependency
+  names rather than manifest files — so the entry was removed and the
+  reasoning recorded in its place. Security alerts are unaffected; they do
+  not come from that file.
+- Pinned actions updated past the Node 20 deprecation (`checkout` v7.0.1,
+  `setup-python` v7.0.0).
 
 ## [1.0.2] — 2026-08-13
 
@@ -194,6 +226,7 @@ First public release.
   date and time helpers, pagination argument handling, and packaging
   invariants.
 
+[1.0.3]: https://github.com/zorderelda/peewee-access/releases/tag/v1.0.3
 [1.0.2]: https://github.com/zorderelda/peewee-access/releases/tag/v1.0.2
 [1.0.1]: https://github.com/zorderelda/peewee-access/releases/tag/v1.0.1
 [1.0.0]: https://github.com/zorderelda/peewee-access/releases/tag/v1.0.0

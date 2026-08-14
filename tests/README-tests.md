@@ -35,11 +35,14 @@ Before tagging a release
 ------------------------
 Run `python -m pytest --require-driver`.
 
-The live tests are the only place the driver is exercised at all -- CI runs
-the offline half on Linux, where they cannot run -- so an ordinary green
-run on a machine without a working driver means the release was never
-tested against a database. --require-driver turns those skips into errors,
-which makes that impossible to do by accident.
+An ordinary green run on a machine without a working driver means nothing
+was tested against a database. --require-driver turns those skips into
+errors, which makes shipping that impossible to do by accident.
+
+CI covers the live half too, in a `windows live driver` job that installs
+the Access Database Engine and runs under --require-driver. That job is not
+a required check: it downloads 80MB from Microsoft, and those URLs rot, so
+a red there means investigate rather than "the branch is broken".
 
 Availability is probed rather than assumed: the driver check calls
 detect_driver(), and the ADOX check actually creates a database file

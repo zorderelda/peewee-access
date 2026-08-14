@@ -47,15 +47,17 @@ tagging a release:
 
     python -m pytest --require-driver
 
-The live tests are the only place the driver is exercised anywhere. CI runs
-the driver-free half on Linux, where they cannot run at all, so a release is
-only ever tested against a real database on a developer's machine. Without
-this flag, a machine whose driver is missing or temporarily unwell reports a
-clean, green, entirely honest-looking pass having touched no database at
-all -- and a release tagged from that run has been validated by nothing.
+Without this flag, a machine whose driver is missing or temporarily unwell
+reports a clean, green, entirely honest-looking pass having touched no
+database at all -- and a release tagged from that run has been validated by
+nothing.
 
 This is not hypothetical. Version 1.0.2 was tagged from a run in which all
 79 live tests were absent.
+
+The same flag is what makes the ``windows live driver`` CI job meaningful:
+without it, a job whose driver install silently failed would skip every
+live test and still report green.
 
 When live tests are skipped, the run ends with a ``live coverage`` summary
 naming the count and the reason, so an ordinary run cannot quietly imply

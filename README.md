@@ -331,13 +331,16 @@ without the Access Database Engine.
 | `pytest -m driver` | The live half only |
 | `pytest --require-driver` | Everything, failing rather than skipping |
 
-**Run `pytest --require-driver` before tagging a release.** The live tests
-are the only place the driver is exercised anywhere — CI runs the driver-free
-half on Linux, where they cannot run — so a release is only ever tested
-against a real database on a developer's machine. Without the flag, a machine
-whose driver is missing or temporarily unwell reports a clean green pass
-having touched no database at all. When live tests are skipped, the run ends
-with a `live coverage` summary saying so.
+**Run `pytest --require-driver` before tagging a release.** Without it, a
+machine whose driver is missing or temporarily unwell reports a clean green
+pass having touched no database at all. When live tests are skipped, the run
+ends with a `live coverage` summary saying so.
+
+CI runs the live half too, in a `windows live driver` job that installs the
+Access Database Engine and runs under `--require-driver` — which is what
+stops a silently failed install from skipping everything and still reporting
+green. It is not a required check: it downloads 80MB from Microsoft, and
+those URLs rot.
 
 Availability is probed, not assumed. The `adox` check creates a database file
 through raw COM rather than importing `win32com` and hoping, because ACE has
