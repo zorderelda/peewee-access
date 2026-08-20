@@ -53,7 +53,43 @@ pwaccess-specific edges of point (b) worth documenting:
     signal-silent too.
 
 
-2. Detecting data macros from pwaccess -- NOT POSSIBLE, drop the idea
+2. What the Access Before/After events actually are
+---------------------------------------------------
+
+They are "data macros" -- table-level event handlers introduced in Access
+2010. A genuinely different feature from peewee's signals, not another name
+for them.
+
+Full event list:
+
+    Before Change    (fires before an insert OR an update)
+    Before Delete
+    After Insert
+    After Update
+    After Delete
+
+Note that Before Change covers both insert and update -- there is no
+separate Before Insert / Before Update pair, so the mapping onto peewee's
+pre_save(created=...) is not one-to-one even in principle.
+
+Constraints that matter for pwaccess:
+
+  - .accdb ONLY. They arrived with the ACE file format in Access 2010 and
+    cannot exist in a .mdb, which pwaccess also supports. Any wording in
+    the docs has to be scoped to .accdb or it is simply wrong for the Jet
+    half of our users.
+
+  - No SQL DDL for them. Jet/ACE SQL has no CREATE TRIGGER, so they can be
+    neither created nor altered over a connection -- only in the Access UI
+    or via SaveAsText/LoadFromText (section 3).
+
+  - They execute in the engine, not in the client. Their coverage is
+    therefore not the same shape as a signal's: a data macro sees someone
+    typing into a datasheet in the Access UI, and a signal never will.
+    This is the core reason not to alias one onto the other (section 5).
+
+
+3. Detecting data macros from pwaccess -- NOT POSSIBLE, drop the idea
 ---------------------------------------------------------------------
 
 Floated an AccessMetadata helper that would report "this table has data
@@ -78,7 +114,7 @@ macros". It cannot be built. Three independent walls:
     pwaccess requires -- there is no route at all.
 
 
-3. OPEN QUESTION -- do data macros fire on pwaccess writes?
+4. OPEN QUESTION -- do data macros fire on pwaccess writes?
 ------------------------------------------------------------
 
 UNRESOLVED. Do not assert either way in the docs until tested.
@@ -119,7 +155,7 @@ Manual test procedure (needs Windows + Access, hence this branch):
   differ, and if they do that is the single most useful thing to write down.
 
 
-4. Planned doc change (not yet written -- pending item 3)
+5. Planned doc change (not yet written -- pending item 4)
 ---------------------------------------------------------
 
 New "Signals" subsection under ORM utilities in docs/pwaccess.rst:401. The
@@ -132,7 +168,7 @@ as a pointer into it. Content:
     specifics from section 1
   - a short "data macros are a different thing" note: .accdb only, authored
     only in Access, invisible to ODBC and ADOX, behaviour for external
-    writers per whatever section 3 turns up, and a suspect when an ordinary
+    writers per whatever section 4 turns up, and a suspect when an ordinary
     save() throws an opaque ODBC error
 
 Mirror the prose into src/pwaccess/orm_utils.py:16 and the README table row
