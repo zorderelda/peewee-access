@@ -30,7 +30,7 @@ import copy
 import logging
 import re
 
-from peewee import CharField, Entity, ForeignKeyField
+from peewee import CharField, Entity, ForeignKeyField, Proxy
 
 from .database import AccessDatabase
 from .exceptions import AccessNotSupportedError
@@ -142,6 +142,22 @@ else:                                                # pragma: no cover
 
 if SchemaMigrator is not None:
 
+    def _base_operation(name):
+        """
+        The undecorated body of a ``SchemaMigrator`` operation.
+
+        ``@operation`` wraps every migrator method in a shim that defers
+        the call as an ``Operation``. Through peewee 4.3 the shim accepted
+        ``with_context=True`` to run the body at once instead. peewee 4.4
+        removed that flag and has ``Operation.run()`` call the body itself,
+        so ``with_context`` is now stored as an ordinary keyword that the
+        body rejects when the migration finally runs. Both shims are built
+        with :func:`functools.wraps`, which leaves the body reachable as
+        ``__wrapped__`` -- the one spelling that holds across the supported
+        peewee range.
+        """
+        return getattr(SchemaMigrator, name).__wrapped__
+
     class AccessMigrator(SchemaMigrator):
         """
         Schema migrator for Microsoft Access.
@@ -180,6 +196,10 @@ if SchemaMigrator is not None:
         transactional_ddl = False
 
         explicit_create_foreign_key = True
+
+        #: Access has no schemas. peewee 4.5 consults this when ``schema=``
+        #: is passed to the constructor and refuses with a ValueError.
+        supports_schema = False
 
         def alter_column_type(self, table, column, field, cast=None):
             """
@@ -221,8 +241,8 @@ if SchemaMigrator is not None:
             """
             Drop a column. *cascade* is ignored; Jet has no ``CASCADE``.
             """
-            return super(AccessMigrator, self).drop_column(
-                table, column_name, cascade=False, with_context=True)
+            return _base_operation('drop_column')(
+                self, table, column_name, cascade=False)
 
         @operation
         def drop_index(self, table, index_name):
@@ -240,7 +260,7 @@ if SchemaMigrator is not None:
                     .sql(Entity(table)))
 
         @operation
-        def add_column(self, table, column_name, field):
+        def add_column(self, table, column_name, field, allow_not_null=False):
             """
             Add a column.
 
@@ -259,12 +279,22 @@ if SchemaMigrator is not None:
             no default into a silent ``UPDATE ... SET col = NULL``, and a
             required foreign key into an unconstrained integer column.
 
+            :param allow_not_null: Emit ``ADD COLUMN ... NOT NULL`` as a
+                single statement with no back-fill, exactly as peewee 4.4
+                and later do for every backend. The statement is valid Jet
+                DDL; on a table that already holds rows it is the engine,
+                not this class, that decides whether to accept it. Needs
+                peewee 4.4 or later.
             :raises ValueError: If *field* is non-null with no default, or
                 is a foreign key with no target field.
             """
+            if allow_not_null:
+                return _base_operation('add_column')(
+                    self, table, column_name, field, allow_not_null=True)
+
             if field.null:
-                return super(AccessMigrator, self).add_column(
-                    table, column_name, field, with_context=True)
+                return _base_operation('add_column')(
+                    self, table, column_name, field)
 
             if field.default is None:
                 raise ValueError('%s is not null but has no default'
@@ -519,11 +549,27 @@ def register_tooling():
                         False):
         _original_migrator = SchemaMigrator.from_database.__func__
 
-        def _access_migrator(cls, database):
-            """Dispatch Access databases to :class:`AccessMigrator`."""
-            if getattr(database, 'access_dialect', False):
-                return AccessMigrator(database)
-            return _original_migrator(cls, database)
+        def _access_migrator(cls, database, schema=None):
+            """
+            Dispatch Access databases to :class:`AccessMigrator`.
+
+            Mirrors the signature peewee 4.4 gave the original: it sees
+            through an initialised ``Proxy`` and takes ``schema=``, which
+            ``playhouse.migrations.Runner`` always passes. *schema* is only
+            forwarded when given, so the older two-argument original still
+            works.
+            """
+            target = database.obj if isinstance(database, Proxy) else database
+            if getattr(target, 'access_dialect', False):
+                if schema is not None:
+                    raise AccessNotSupportedError(
+                        'Access has no schemas; call '
+                        'SchemaMigrator.from_database() without schema= '
+                        'for an Access database.')
+                return AccessMigrator(target)
+            if schema is None:
+                return _original_migrator(cls, database)
+            return _original_migrator(cls, database, schema=schema)
 
         _access_migrator._pwaccess_patch = True
         _access_migrator._pwaccess_original = _original_migrator

@@ -196,7 +196,11 @@ express them at all — they are DAO/ADOX operations in Access, not SQL ones:
 
 `add_column()` with a non-null field works, but logs a warning: the column
 is created and back-filled with its default, and remains nullable, because
-Access cannot add a NOT NULL constraint to an existing column.
+Access cannot add a NOT NULL constraint to an existing column. With peewee
+4.4 or later, `add_column(..., allow_not_null=True)` instead emits
+`ADD COLUMN ... NOT NULL` as a single statement with no back-fill; the
+engine decides whether to accept it against the rows the table already
+holds.
 
 ---
 

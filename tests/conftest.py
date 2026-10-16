@@ -180,15 +180,50 @@ def offline_migrator(offline_db):
 
 
 ##
-# @brief Render a migrator operation to its SQL string.
+# @brief Invoke a migrator operation's body directly, bypassing @operation.
+#
+# @operation defers every migrator method into an Operation. Through
+# peewee 4.3 passing with_context=True ran the body at once instead;
+# peewee 4.4 dropped that flag, so the portable route to the body is the
+# __wrapped__ attribute functools.wraps leaves on the shim. The result is
+# whatever the body returns: a Context for a single statement, or a list
+# of further Operations for a composite one.
+#
+# @return A callable taking (migrator, method_name, *args, **kwargs).
+#
+@pytest.fixture
+def run_body():
+	def _run(migrator, method, *args, **kwargs):
+		body = getattr(type(migrator), method).__wrapped__
+		return body(migrator, *args, **kwargs)
+	return _run
+
+
+##
+# @brief Render a single-statement migrator operation to its SQL string.
 # @return A callable taking (migrator, method_name, *args) -> SQL text.
 #
 @pytest.fixture
-def render_sql():
+def render_sql(run_body):
 	def _render(migrator, method, *args, **kwargs):
-		kwargs['with_context'] = True
-		return getattr(migrator, method)(*args, **kwargs).query()[0]
+		return run_body(migrator, method, *args, **kwargs).query()[0]
 	return _render
+
+
+##
+# @brief The name of the migrator method a deferred Operation will call.
+#
+# peewee 4.3 stored the name (Operation.method); 4.4 stores the function
+# itself (Operation.fn).
+#
+@pytest.fixture
+def operation_name():
+	def _name(op):
+		method = getattr(op, 'method', None)
+		if method is None:
+			method = op.fn.__name__
+		return method
+	return _name
 
 
 # ---------------------------------------------------------------------------

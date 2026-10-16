@@ -5,6 +5,38 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **`AccessMigrator` works with peewee 4.4 and later.** peewee 4.4 rewrote
+  `playhouse.migrate`: the `with_context=True` flag that ran an operation
+  body immediately is gone, `Operation.method` became `Operation.fn`, and
+  `SchemaMigrator.from_database()` gained a `schema=` keyword that the new
+  `playhouse.migrations` runner always passes. `drop_column()` and a
+  nullable `add_column()` relied on the flag, so under peewee 4.4+ both
+  failed inside `migrate()` with `unexpected keyword argument
+  'with_context'`; the non-null `add_column()` path was unaffected. The
+  weekly CI run went red once pip resolved peewee 4.5.3, while the locked
+  Windows job stayed green on its pinned 4.3.0. The overrides now reach the
+  base implementation through the `__wrapped__` attribute
+  `functools.wraps` leaves on the decorator, which holds on every supported
+  peewee, and `from_database()` accepts `schema=` (refusing a non-`None`
+  value, since Access has no schemas) and an initialised `Proxy`. The test
+  suite calls operation bodies in a version-independent way and gains a
+  test that goes through `migrate()` itself, so the deferral layer is
+  covered rather than only the generated SQL.
+
+### Added
+
+- **`add_column(..., allow_not_null=True)`** is passed through to peewee
+  4.4+, which emits `ALTER TABLE t ADD COLUMN c LONG NOT NULL` as a single
+  statement with no back-fill and no `add_not_null()` step. That makes it
+  the one route to a genuinely required column through the migrator on
+  Access. Whether the engine accepts it on a table that already holds rows
+  is the engine's decision; it has not been exercised against a live
+  database.
+
 ## [1.0.3] — 2026-08-14
 
 **No functional change.** The package code is byte-identical to 1.0.2; a

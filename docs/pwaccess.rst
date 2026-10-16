@@ -393,6 +393,12 @@ Migrations
         migrator = SchemaMigrator.from_database(db)
         migrate(migrator.add_column('user', 'nickname', TextField(null=True)))
 
+    ``add_column()`` with a non-null field creates the column, back-fills
+    its default and logs a warning that it remains nullable. With peewee
+    4.4 or later, ``add_column(..., allow_not_null=True)`` emits
+    ``ADD COLUMN ... NOT NULL`` as a single statement instead; the engine
+    decides whether to accept it against the rows the table already holds.
+
     .. note::
        Access DDL is not transactional. A failed multi-step migration
        leaves the earlier steps applied, so take a copy of the file first.

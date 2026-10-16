@@ -125,12 +125,11 @@ def test_unsupported_operations_refuse(offline_migrator, method, args):
 ##
 # @brief A nullable column is added with a single statement.
 #
-def test_add_column_nullable(offline_migrator):
-	## with_context=True runs the operation body immediately instead of
-	## deferring it, which is how migrate() ultimately invokes it.
-	operations = offline_migrator.add_column('note', 'flags',
-	                                         IntegerField(null=True),
-	                                         with_context=True)
+def test_add_column_nullable(offline_migrator, run_body):
+	## run_body() invokes the operation body directly instead of deferring
+	## it, which is what migrate() ultimately does.
+	operations = run_body(offline_migrator, 'add_column', 'note', 'flags',
+	                      IntegerField(null=True))
 	## One statement only: no default to back-fill, no index to build.
 	assert len(operations) == 1
 
@@ -142,30 +141,29 @@ def test_add_column_nullable(offline_migrator):
 # base implementation's trailing add_not_null() step is omitted. Were it
 # kept, add_column() would raise for every non-null field.
 #
-def test_add_column_not_null_skips_constraint(offline_migrator, caplog):
+def test_add_column_not_null_skips_constraint(offline_migrator, run_body,
+                                              operation_name, caplog):
 	import logging
 
 	with caplog.at_level(logging.WARNING, logger='peewee'):
-		operations = offline_migrator.add_column(
-			'note', 'votes', IntegerField(null=False, default=0),
-			with_context=True)
+		operations = run_body(
+			offline_migrator, 'add_column',
+			'note', 'votes', IntegerField(null=False, default=0))
 
 	assert isinstance(operations, list)
 	assert len(operations) == 2          # ADD COLUMN, then UPDATE
 	assert 'NOT NULL' in caplog.text
 
 	## Crucially, no add_not_null step: that would raise.
-	assert not any(getattr(op, 'method', '') == 'add_not_null'
-	               for op in operations)
+	assert not any(operation_name(op) == 'add_not_null' for op in operations)
 
 
 ##
 # @brief An indexed column also produces a CREATE INDEX.
 #
-def test_add_column_with_index(offline_migrator):
-	operations = offline_migrator.add_column(
-		'note', 'tag', TextField(null=True, index=True),
-		with_context=True)
+def test_add_column_with_index(offline_migrator, run_body):
+	operations = run_body(offline_migrator, 'add_column',
+	                      'note', 'tag', TextField(null=True, index=True))
 	assert isinstance(operations, list)
 	assert len(operations) == 2          # ADD COLUMN, then CREATE INDEX
 
@@ -179,11 +177,11 @@ def test_add_column_with_index(offline_migrator):
 # runs anyway and emits UPDATE note SET votes = NULL, quietly writing
 # NULLs into a column the caller asked to be non-null.
 #
-def test_add_column_not_null_without_default_refuses(offline_migrator):
+def test_add_column_not_null_without_default_refuses(offline_migrator,
+                                                     run_body):
 	with pytest.raises(ValueError) as excinfo:
-		offline_migrator.add_column('note', 'votes',
-		                            IntegerField(null=False),
-		                            with_context=True)
+		run_body(offline_migrator, 'add_column', 'note', 'votes',
+		         IntegerField(null=False))
 	assert 'default' in str(excinfo.value)
 
 
@@ -195,7 +193,9 @@ def test_add_column_not_null_without_default_refuses(offline_migrator):
 # it leaves an ordinary integer column where a relationship was asked for
 # -- which reflection then cannot see either.
 #
-def test_add_column_not_null_foreign_key_keeps_constraint(offline_migrator):
+def test_add_column_not_null_foreign_key_keeps_constraint(offline_migrator,
+                                                          run_body,
+                                                          operation_name):
 	from peewee import ForeignKeyField, Model
 
 	class Note(Model):
@@ -206,9 +206,9 @@ def test_add_column_not_null_foreign_key_keeps_constraint(offline_migrator):
 	field = ForeignKeyField(Note, field=Note.id, null=False, default=1)
 	field.name = field.column_name = 'note_id'
 
-	operations = offline_migrator.add_column('comment', 'note_id', field,
-	                                         with_context=True)
-	methods = [getattr(op, 'method', None) for op in operations]
+	operations = run_body(offline_migrator, 'add_column',
+	                      'comment', 'note_id', field)
+	methods = [operation_name(op) for op in operations]
 	assert 'add_foreign_key_constraint' in methods
 	## And the NOT NULL step is still absent, which is the whole point of
 	## overriding add_column() in the first place.
@@ -218,7 +218,8 @@ def test_add_column_not_null_foreign_key_keeps_constraint(offline_migrator):
 ##
 # @brief A nullable foreign key goes through the base implementation.
 #
-def test_add_column_nullable_foreign_key(offline_migrator):
+def test_add_column_nullable_foreign_key(offline_migrator, run_body,
+                                         operation_name):
 	from peewee import ForeignKeyField, Model
 
 	class Note(Model):
@@ -229,9 +230,9 @@ def test_add_column_nullable_foreign_key(offline_migrator):
 	field = ForeignKeyField(Note, field=Note.id, null=True)
 	field.name = field.column_name = 'note_id'
 
-	operations = offline_migrator.add_column('comment', 'note_id', field,
-	                                         with_context=True)
-	methods = [getattr(op, 'method', None) for op in operations]
+	operations = run_body(offline_migrator, 'add_column',
+	                      'comment', 'note_id', field)
+	methods = [operation_name(op) for op in operations]
 	assert 'add_foreign_key_constraint' in methods
 	assert 'add_not_null' not in methods
 
@@ -239,14 +240,113 @@ def test_add_column_nullable_foreign_key(offline_migrator):
 ##
 # @brief A non-null column with a default is back-filled, not nulled.
 #
-def test_add_column_backfills_the_default(offline_migrator):
-	operations = offline_migrator.add_column(
-		'note', 'votes', IntegerField(null=False, default=7),
-		with_context=True)
+def test_add_column_backfills_the_default(offline_migrator, run_body,
+                                          operation_name):
+	operations = run_body(
+		offline_migrator, 'add_column',
+		'note', 'votes', IntegerField(null=False, default=7))
 	apply_default = [op for op in operations
-	                 if getattr(op, 'method', None) == 'apply_default']
+	                 if operation_name(op) == 'apply_default']
 	assert len(apply_default) == 1
 	## The field handed to apply_default must still carry its default; the
 	## non-null path temporarily clears null on a copy and has to put the
 	## default back before the back-fill is queued.
 	assert apply_default[0].args[2].default == 7
+
+
+##
+# @brief allow_not_null must emit a single NOT NULL ADD COLUMN.
+#
+# peewee 4.4 added the flag for every backend: one statement, no
+# back-fill, no add_not_null() step. That last point is what makes it
+# usable on Access at all, so the override must pass it through rather
+# than divert it into the back-fill path.
+#
+def test_add_column_allow_not_null(offline_migrator, run_body,
+                                   operation_name):
+	import inspect
+
+	from playhouse.migrate import SchemaMigrator
+
+	base = SchemaMigrator.add_column.__wrapped__
+	if 'allow_not_null' not in inspect.signature(base).parameters:
+		pytest.skip('allow_not_null needs peewee >= 4.4')
+
+	operations = run_body(offline_migrator, 'add_column', 'note', 'votes',
+	                      IntegerField(null=False), allow_not_null=True)
+	assert [operation_name(op) for op in operations] == ['alter_add_column']
+
+	op = operations[0]
+	sql = run_body(offline_migrator, 'alter_add_column',
+	               *op.args, **op.kwargs).query()[0]
+	assert sql == 'ALTER TABLE [note] ADD COLUMN [votes] LONG NOT NULL'
+
+
+##
+# @brief A deferred operation must still execute under migrate().
+#
+# The tests above call the operation bodies directly. This one goes
+# through the deferral layer migrate() uses, which is where peewee 4.4
+# changed shape: the with_context flag the overrides once passed to the
+# base class is gone, and an Operation now calls the body itself. Under
+# 4.4+ the old overrides raised TypeError here for drop_column() and a
+# nullable add_column(), while every direct-call test still passed.
+#
+def test_deferred_operation_executes(recording_db, sql_only):
+	from playhouse.migrate import SchemaMigrator, migrate
+
+	recording_db.get_foreign_keys = lambda table, schema=None: []
+	migrator = SchemaMigrator.from_database(recording_db)
+
+	migrate(migrator.drop_column('note', 'votes'),
+	        migrator.add_column('note', 'flags', IntegerField(null=True)),
+	        migrator.add_column('note', 'score',
+	                            IntegerField(null=False, default=0)))
+
+	assert sql_only(recording_db.statements) == [
+		('ALTER TABLE [note] DROP COLUMN [votes]', []),
+		('ALTER TABLE [note] ADD COLUMN [flags] LONG', []),
+		('ALTER TABLE [note] ADD COLUMN [score] LONG', []),
+		('UPDATE [note] SET [score] = ?', [0]),
+	]
+
+
+##
+# @brief from_database() must take the schema= keyword peewee 4.4 added.
+#
+# playhouse.migrations.Runner always passes it, as None. A real value
+# must refuse: Access has no schemas to qualify a table name with.
+#
+def test_from_database_schema_keyword(offline_db):
+	from playhouse.migrate import SchemaMigrator
+
+	migrator = SchemaMigrator.from_database(offline_db, schema=None)
+	assert type(migrator).__name__ == 'AccessMigrator'
+
+	with pytest.raises(pwaccess.AccessNotSupportedError):
+		SchemaMigrator.from_database(offline_db, schema='dbo')
+
+
+##
+# @brief from_database() must see through an initialised Proxy.
+#
+def test_from_database_unwraps_proxy(offline_db):
+	from peewee import Proxy
+	from playhouse.migrate import SchemaMigrator
+
+	proxy = Proxy()
+	proxy.initialize(offline_db)
+	migrator = SchemaMigrator.from_database(proxy)
+	assert type(migrator).__name__ == 'AccessMigrator'
+	assert migrator.database is offline_db
+
+
+##
+# @brief Other backends must still reach their own migrator.
+#
+def test_from_database_other_backends_untouched():
+	from peewee import SqliteDatabase
+	from playhouse.migrate import SchemaMigrator
+
+	migrator = SchemaMigrator.from_database(SqliteDatabase(':memory:'))
+	assert type(migrator).__name__ == 'SqliteMigrator'
