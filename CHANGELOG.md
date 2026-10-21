@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.4] — 2026-10-21
 
 ### Fixed
 
@@ -258,6 +258,7 @@ First public release.
   date and time helpers, pagination argument handling, and packaging
   invariants.
 
+[1.0.4]: https://github.com/zorderelda/peewee-access/releases/tag/v1.0.4
 [1.0.3]: https://github.com/zorderelda/peewee-access/releases/tag/v1.0.3
 [1.0.2]: https://github.com/zorderelda/peewee-access/releases/tag/v1.0.2
 [1.0.1]: https://github.com/zorderelda/peewee-access/releases/tag/v1.0.1
