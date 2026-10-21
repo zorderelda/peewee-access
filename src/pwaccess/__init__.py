@@ -67,7 +67,7 @@ from .tools import (
 )
 from .types import FIELD_TYPES, OPERATIONS
 
-__version__ = '1.0.3'
+__version__ = '1.0.4'
 
 __all__ = [
     'AccessConfigurationError',
